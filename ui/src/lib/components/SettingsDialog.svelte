@@ -12,11 +12,6 @@
 		KeyboardIcon,
 		Cancel01Icon as RemoveIcon,
 		Copy01Icon,
-		Coffee02Icon,
-		DiscordIcon,
-		LastFmIcon,
-		Globe02Icon,
-		ArrowDown01Icon,
 		Alert02Icon,
 		LinkSquare02Icon
 	} from '@hugeicons/core-free-icons';
@@ -32,13 +27,9 @@
 	import { HELP_COMBO } from '$lib/shortcuts';
 	import { copyText } from '$lib/clipboard';
 	import * as api from '$lib/api';
-	import { blocked, prefs, refreshView, setAutoplay, ui, toast, unblockArtist } from '$lib/player.svelte';
+	import { blocked, prefs, setAutoplay, ui, toast, unblockArtist } from '$lib/player.svelte';
 	import { win } from '$lib/win.svelte';
-	import { lt } from '$lib/lt.svelte';
 	import ColorPicker from '$lib/components/ColorPicker.svelte';
-	import Changelog from '$lib/components/Changelog.svelte';
-	import DiscordSettings from '$lib/components/DiscordSettings.svelte';
-	import ScrobbleSettings from '$lib/components/ScrobbleSettings.svelte';
 	import {
 		THEMES,
 		FONTS,
@@ -62,28 +53,17 @@
 		type Custom,
 		type ThemeId
 	} from '$lib/theme.svelte';
-	import {
-		updateState,
-		availableMessage,
-		checkForUpdatesInteractive,
-		installUpdate,
-		openDownloadPage,
-		recheckForUpdates
-	} from '$lib/updater.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { t, setLocale, currentLocale, LOCALES } from '$lib/i18n.svelte';
+	import { t } from '$lib/i18n.svelte';
 	import { appIcon, chooseAppIcon } from '$lib/appicon.svelte';
 	import GlobalHotkeysSettings from '$lib/components/GlobalHotkeysSettings.svelte';
 	import LyricsSourcesSettings from '$lib/components/LyricsSourcesSettings.svelte';
-	import LanguagePicker from '$lib/components/LanguagePicker.svelte';
 
 	type TabId =
 		| 'general'
 		| 'themes'
 		| 'playback'
 		| 'hotkeys'
-		| 'discord'
-		| 'scrobbling'
 		| 'data'
 		| 'about';
 	const TABS = $derived<{ id: TabId; label: string; hint: string; icon: typeof Settings02Icon }[]>([
@@ -91,8 +71,6 @@
 		{ id: 'themes', label: t('settings.tabs.themes'), hint: t('settings.tabs.themes_hint'), icon: PaintBoardIcon },
 		{ id: 'playback', label: t('settings.tabs.playback'), hint: t('settings.tabs.playback_hint'), icon: PlayCircleIcon },
 		{ id: 'hotkeys', label: t('settings.tabs.hotkeys'), hint: t('settings.tabs.hotkeys_hint'), icon: KeyboardIcon },
-		{ id: 'discord', label: t('settings.tabs.discord'), hint: t('settings.tabs.discord_hint'), icon: DiscordIcon },
-		{ id: 'scrobbling', label: t('settings.tabs.scrobbling'), hint: t('settings.tabs.scrobbling_hint'), icon: LastFmIcon },
 		{ id: 'data', label: t('settings.tabs.data'), hint: t('settings.tabs.data_hint'), icon: Database02Icon },
 		{ id: 'about', label: t('settings.tabs.about'), hint: t('settings.tabs.about_hint'), icon: InformationCircleIcon }
 	]);
@@ -197,10 +175,6 @@
 	let tab = $state<TabId>('general');
 	const currentTab = $derived(TABS.find((tb) => tb.id === tab) ?? TABS[0]);
 	const shortcutsHint = $derived(t('settings.general.shortcuts_hint').split('{key}'));
-	const currentLocaleLabel = $derived(
-		LOCALES.find((l) => l.id === currentLocale.id)?.nativeLabel ?? currentLocale.id
-	);
-	let langOpen = $state(false);
 	let settings = $state<Record<string, string>>({});
 	let clients = $state<string[]>([]);
 	let proxyInput = $state('');
@@ -222,27 +196,16 @@
 	let clearing = $state(false);
 	let version = $state('');
 	getVersion().then((v) => (version = v));
-	// Release candidates ship only what the updater installs, so an .rpm, .deb or AUR install has
-	// nothing to take from the beta channel. Shown in dev, which is never the AppImage either.
-	let betaAvailable = $state(import.meta.env.DEV);
-	api.canSelfUpdate().then((v) => (betaAvailable ||= v)).catch(() => {});
-	// Result of the last "Check for updates" click — shown inline (a toast renders behind the modal).
-	let updateResult = $state<{ message: string; error: boolean } | null>(null);
 
-	// (Re)load whenever the modal opens, so it reflects the current persisted values. Also clear the
-	// stale update-check result so re-opening the modal doesn't show it until pressed again.
+	// (Re)load whenever the modal opens, so it reflects the current persisted values.
 	// untrack: this reads and writes theme state, and `registerFontFiles` can rewrite it again when
 	// it prunes a deleted font. Opening the modal is the only thing that should run it.
 	$effect(() => {
 		if (!ui.settingsOpen) return;
 		untrack(() => {
 			// Opened on a section from elsewhere (the lyrics source picker): its tab, scrolled to it
-			// once the tab has rendered. The Last.fm menu and "Edit scrobble" open a whole tab.
-			if (ui.settingsFocus === 'scrobbling') {
-				tab = 'scrobbling';
-				ui.settingsFocus = null;
-				load();
-			} else if (ui.settingsFocus) {
+			// once the tab has rendered.
+			if (ui.settingsFocus) {
 				tab = 'playback';
 				const id = `settings-${ui.settingsFocus}`;
 				ui.settingsFocus = null;
@@ -252,7 +215,6 @@
 			} else {
 				load();
 			}
-			updateResult = null;
 			pickerOpen = false;
 			readBack();
 			// Catches a font deleted while the app was running, not just between launches.
@@ -263,10 +225,6 @@
 			}
 		});
 	});
-
-	async function checkUpdates() {
-		updateResult = await checkForUpdatesInteractive();
-	}
 
 	// Diagnostics. Toasts render behind this modal, so the buttons report on themselves.
 	let diagState = $state<'idle' | 'busy' | 'copied' | 'saved'>('idle');
@@ -306,23 +264,6 @@
 		}
 	}
 
-	async function openBugForm() {
-		diagError = '';
-		try {
-			// GitHub's prefill only reaches `input` and `textarea` fields, so the "Which system?"
-			// dropdown stays the user's one click and everything the app knows goes in `system`.
-			const system = await api.diagnosticsSummary();
-			const q = new URLSearchParams({
-				template: 'bug_report.yml',
-				version,
-				system
-			});
-			await api.openExternal(`https://github.com/SimoHypers/limusic/issues/new?${q}`);
-		} catch (e) {
-			diagError = String(e);
-		}
-	}
-
 	async function load() {
 		try {
 			const [s, c] = await Promise.all([api.getSettings(), api.getStreamClients()]);
@@ -336,16 +277,12 @@
 	}
 
 	const quality = $derived(settings.quality ?? 'HIGH');
-	const historyOn = $derived(settings.enable_history !== 'false');
+	const historyOn = $derived(settings.enable_history === 'true');
 	// On unless turned off: loudness matching is what YTM does, and it's what most people want.
 	// Off gives the untouched master, limiter included (#298, #300).
 	const normalizeOn = $derived(settings.normalize_volume !== 'false');
 	// Off by default: experimental, and it runs a second decoder while tracks overlap.
 	const crossfadeOn = $derived(settings.crossfade === 'true');
-	// A room carries one track and one position, so an overlap cannot be synced: the backend
-	// suspends the fade for as long as we are in one (`AppState::apply_crossfade`). Say so here,
-	// or it reads as crossfade quietly breaking.
-	const crossfadeSuspended = $derived(lt.role !== 'none');
 	// Clamped like the player clamps it (`set_crossfade`), so a stored value from anywhere but this
 	// slider cannot show a number the audio will not use.
 	const crossfadeSecs = $derived.by(() => {
@@ -363,8 +300,6 @@
 	const stickyShuffleOn = $derived(settings.sticky_shuffle === 'true');
 	// Off by default: shuffle keeps what was added with Add to queue behind the playlist (#369).
 	const shuffleWholeOn = $derived(settings.shuffle_whole_queue === 'true');
-	const updateBannerOn = $derived(settings.update_banner !== 'false');
-	const betaOn = $derived(settings.update_channel === 'beta');
 	const trayOn = $derived(settings.close_to_tray !== 'false');
 	const trackNotificationsOn = $derived(settings.track_notifications === 'true');
 	const autostartOn = $derived(settings.autostart === 'true');
@@ -450,17 +385,6 @@
 	async function setShuffleWhole(on: boolean) {
 		settings.shuffle_whole_queue = on ? 'true' : 'false';
 		await api.setSetting('shuffle_whole_queue', settings.shuffle_whole_queue);
-	}
-
-	async function setUpdateBanner(on: boolean) {
-		settings.update_banner = on ? 'true' : 'false';
-		await api.setSetting('update_banner', settings.update_banner);
-	}
-
-	async function setBeta(on: boolean) {
-		settings.update_channel = on ? 'beta' : 'stable';
-		await api.setSetting('update_channel', settings.update_channel);
-		await recheckForUpdates();
 	}
 
 	async function setTray(on: boolean) {
@@ -574,12 +498,11 @@
 {/snippet}
 
 <Dialog.Root bind:open={ui.settingsOpen}>
-	<!-- The Discord and Scrobbling tabs put their live preview *beside* the controls rather than
-	     under them, so they need the extra width; every other tab reads better narrow. Deliberately not animated:
-	     transitioning the width relayouts the whole modal every frame, and WebKitGTK is the webview
-	     that would pay for it. -->
+	<!-- The hotkeys tab needs extra width for its keybinding rows; every other tab reads better
+	     narrow. Deliberately not animated: transitioning the width relayouts the whole modal
+	     every frame. -->
 	<Dialog.Content
-		class="gap-0 overflow-hidden p-0 {tab === 'discord' || tab === 'scrobbling' ? 'sm:max-w-5xl' : tab === 'hotkeys' ? 'sm:max-w-4xl' : 'sm:max-w-3xl'}"
+		class="gap-0 overflow-hidden p-0 {tab === 'hotkeys' ? 'sm:max-w-4xl' : 'sm:max-w-3xl'}"
 	>
 		<Dialog.Description class="sr-only">{t('settings.title')}</Dialog.Description>
 
@@ -623,11 +546,6 @@
 					<p class="truncate text-xs text-muted-foreground">{currentTab.hint}</p>
 				</header>
 
-				{#if loaded && tab === 'discord'}
-					<DiscordSettings {settings} />
-				{:else if loaded && tab === 'scrobbling'}
-					<ScrobbleSettings {settings} />
-				{:else}
 				<div class="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5">
 					{#if !loaded}
 						<p class="text-sm text-muted-foreground">{t('common.loading')}</p>
@@ -648,17 +566,6 @@
 									''}</span
 							>
 						</button>
-						<section class={GROUP}>
-							<h3 class={LABEL}>{t('settings.sections.language')}</h3>
-							<div class={CARD}>
-								{@render row({
-									title: t('settings.general.language'),
-									desc: t('settings.general.language_hint'),
-									control: languageTrigger,
-									below: langOpen ? languageList : undefined
-								})}
-							</div>
-						</section>
 						<section class={GROUP}>
 							<h3 class={LABEL}>{t('settings.sections.activity')}</h3>
 							<div class={CARD}>
@@ -825,9 +732,7 @@
 								{@render row({
 									title: t('settings.playback.crossfade'),
 									badge: t('settings.themes.experimental'),
-									desc: crossfadeSuspended
-										? t('settings.playback.crossfade_lt_paused')
-										: t('settings.playback.crossfade_hint'),
+									desc: t('settings.playback.crossfade_hint'),
 									control: crossfadeSwitch,
 									tall: true
 								})}
@@ -935,7 +840,7 @@
 							class="mb-7 rounded-xl border bg-gradient-to-br from-primary/8 to-transparent px-4 py-4"
 						>
 							<div class="flex items-center gap-2">
-								<span class="font-heading text-lg font-bold">Limusic</span>
+								<span class="font-heading text-lg font-bold">MithenMusic</span>
 								{#if version}
 									<span
 										class="rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-semibold text-primary"
@@ -948,48 +853,6 @@
 								{t('settings.about.description')}
 							</p>
 						</div>
-
-						<section class={GROUP}>
-							<h3 class={LABEL}>{t('settings.sections.support')}</h3>
-							<div class={CARD}>
-								{@render row({
-									title: t('settings.about.kofi'),
-									desc: t('settings.about.kofi_hint'),
-									control: kofiButton,
-									tall: true
-								})}
-							</div>
-						</section>
-
-						<section class={GROUP}>
-							<h3 class={LABEL}>{t('settings.sections.updates')}</h3>
-							<div class={CARD}>
-								{@render row({
-									title: t('settings.about.check_updates'),
-									desc: updateState.available && !updateState.canInstall
-										? `${availableMessage(updateState.available)} ${t('settings.about.update_packaged')}`
-										: updateState.available
-											? availableMessage(updateState.available)
-											: t('settings.about.up_to_date'),
-									control: updateButton,
-									below: updateResult && !updateState.available ? updateAlert : undefined
-								})}
-								{@render row({
-									title: t('settings.general.update_banner'),
-									desc: t('settings.general.update_banner_hint'),
-									control: bannerSwitch,
-									tall: true
-								})}
-								{#if betaAvailable}
-									{@render row({
-										title: t('settings.about.beta'),
-										desc: t('settings.about.beta_hint'),
-										control: betaSwitch,
-										tall: true
-									})}
-								{/if}
-							</div>
-						</section>
 
 						<section class={GROUP}>
 							<h3 class={LABEL}>{t('settings.sections.report')}</h3>
@@ -1006,63 +869,16 @@
 									desc: t('settings.about.diagnostics_save_hint'),
 									control: saveDiagButton
 								})}
-								{@render row({
-									title: t('settings.about.report_issue'),
-									desc: t('settings.about.report_issue_hint'),
-									control: reportButton
-								})}
-							</div>
-						</section>
-
-						<section class={GROUP}>
-							<h3 class={LABEL}>{t('settings.sections.whats_new')}</h3>
-							<div class={CARD}>
-								{@render row({
-									title: t('settings.about.changelog'),
-									desc: t('settings.about.version').replace('{version}', version),
-									below: changelog
-								})}
 							</div>
 						</section>
 					{/if}
 				</div>
-				{/if}
 			</div>
 		</div>
 	</Dialog.Content>
 </Dialog.Root>
 
 <!-- Controls. Split out so the rows above read as a list of settings rather than a wall of markup. -->
-<!-- Picking refreshes the page behind the dialog once Rust has the new language: half of what is on
-     screen is YouTube's own text (#274), and that half only changes on the next fetch. -->
-{#snippet languageTrigger()}
-	<button
-		type="button"
-		onclick={() => (langOpen = !langOpen)}
-		aria-expanded={langOpen}
-		aria-label="{t('settings.general.language')}: {currentLocaleLabel}"
-		class="flex h-9 w-44 shrink-0 cursor-pointer items-center gap-2 rounded-4xl border border-input bg-input/30 px-3 text-sm transition-colors hover:bg-input/50"
-	>
-		<HugeiconsIcon icon={Globe02Icon} strokeWidth={2} class="size-4 shrink-0 text-muted-foreground" />
-		<span class="flex-1 truncate text-left">{currentLocaleLabel}</span>
-		<HugeiconsIcon
-			icon={ArrowDown01Icon}
-			strokeWidth={2}
-			class="size-4 shrink-0 text-muted-foreground transition-transform {langOpen ? 'rotate-180' : ''}"
-		/>
-	</button>
-{/snippet}
-
-{#snippet languageList()}
-	<LanguagePicker
-		onclose={() => (langOpen = false)}
-		onpick={(id) => {
-			langOpen = false;
-			setLocale(id).then(refreshView);
-		}}
-	/>
-{/snippet}
-
 {#snippet historySwitch()}<Switch checked={historyOn} onCheckedChange={setHistory} />{/snippet}
 {#snippet traySwitch()}<Switch checked={trayOn} onCheckedChange={setTray} />{/snippet}
 {#snippet trackNotificationsSwitch()}<Switch
@@ -1145,8 +961,6 @@
 	</Popover.Root>
 {/snippet}
 {#snippet hideVideoSwitch()}<Switch checked={hideVideosOn} onCheckedChange={setHideVideos} />{/snippet}
-{#snippet bannerSwitch()}<Switch checked={updateBannerOn} onCheckedChange={setUpdateBanner} />{/snippet}
-{#snippet betaSwitch()}<Switch checked={betaOn} onCheckedChange={setBeta} />{/snippet}
 {#snippet openPlayerSwitch()}<Switch
 		checked={appearance.openPlayerOnPlay}
 		onCheckedChange={(on) => setAppearance({ openPlayerOnPlay: on })}
@@ -1454,43 +1268,8 @@
 	</Button>
 {/snippet}
 
-{#snippet reportButton()}
-	<Button size="sm" onclick={openBugForm}>{t('settings.about.report_issue_button')}</Button>
-{/snippet}
-
-{#snippet kofiButton()}
-	<Button variant="secondary" size="sm" onclick={() => api.openExternal('https://ko-fi.com/simohypers')}>
-		<HugeiconsIcon icon={Coffee02Icon} size={15} strokeWidth={1.8} />
-		{t('settings.about.kofi_button')}
-	</Button>
-{/snippet}
-
 {#snippet diagAlert()}
 	<Alert variant="destructive" class="mt-3">
 		<AlertDescription>{diagError}</AlertDescription>
 	</Alert>
-{/snippet}
-
-{#snippet updateButton()}
-	{#if updateState.available && !updateState.canInstall}
-		<Button size="sm" onclick={openDownloadPage}>{t('settings.about.download_page')}</Button>
-	{:else if updateState.available}
-		<Button size="sm" onclick={installUpdate} disabled={updateState.installing}>
-			{updateState.installing ? t('common.loading') : t('settings.about.install_update')}
-		</Button>
-	{:else}
-		<Button variant="outline" size="sm" onclick={checkUpdates} disabled={updateState.checking}>
-			{updateState.checking ? t('settings.about.checking_updates') : t('settings.about.check_updates')}
-		</Button>
-	{/if}
-{/snippet}
-
-{#snippet updateAlert()}
-	<Alert variant={updateResult?.error ? 'destructive' : 'default'}>
-		<AlertDescription>{updateResult?.message}</AlertDescription>
-	</Alert>
-{/snippet}
-
-{#snippet changelog()}
-	<Changelog current={version} />
 {/snippet}

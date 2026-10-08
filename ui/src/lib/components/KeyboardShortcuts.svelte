@@ -26,6 +26,7 @@
 			title: t('dialogs.shortcuts.group_general'),
 			rows: [
 				[t('dialogs.shortcuts.refresh_page'), 'F5'],
+				[t('dialogs.shortcuts.focus_search'), '.'],
 				[t('dialogs.shortcuts.search_anywhere'), `${MOD}K`],
 				[t('dialogs.shortcuts.toggle_now_playing'), `${MOD}E`],
 				[t('dialogs.shortcuts.zoom_in'), `${MOD}+`],

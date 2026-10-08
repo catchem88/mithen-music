@@ -1,4 +1,4 @@
-// A pasted YouTube / YouTube Music link turned into something Limusic can open (#63). Some
+// A pasted YouTube / YouTube Music link turned into something MithenMusic can open (#63). Some
 // playlists are only ever reachable by URL: they don't show up in search and aren't in the
 // library, so without this there is no way into them.
 //
@@ -46,4 +46,29 @@ export function parseYtLink(input: string): LinkTarget | null {
 		if (rest.startsWith('UC')) return { kind: 'artist', id: rest };
 	}
 	return null;
+}
+
+/** Extensions mpv can play that we also scan for (mirrors `AUDIO_EXT` in local.rs). */
+const AUDIO_EXTS = new Set([
+	'mp3',
+	'flac',
+	'm4a',
+	'm4b',
+	'aac',
+	'ogg',
+	'oga',
+	'opus',
+	'wav',
+	'wma',
+	'aiff',
+	'aif',
+	'ape',
+	'wv',
+	'mka'
+]);
+
+/** A path the OS handed us that looks like an audio file MithenMusic can open and play. */
+export function isAudioPath(input: string): boolean {
+	const m = /\.([a-z0-9]+)$/i.exec(input.trim());
+	return !!m && AUDIO_EXTS.has(m[1].toLowerCase());
 }

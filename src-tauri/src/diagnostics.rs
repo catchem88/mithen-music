@@ -1,8 +1,8 @@
 //! The text a user hands over when something breaks: what this machine is, plus the tail of
-//! `limusic.log` with the secrets taken out.
+//! `mithenmusic.log` with the secrets taken out.
 //!
 //! A report used to cost a round of questions (version, distro, how they installed it) and then
-//! walking someone to `~/.local/share/limusic/limusic.log` by hand. This is that conversation,
+//! walking someone to `~/.local/share/limusic/mithenmusic.log` by hand. This is that conversation,
 //! precomputed, behind one button in Settings ▸ About.
 //!
 //! Redaction is the part that is not allowed to be lazy. The blob is written to be pasted into a
@@ -56,7 +56,7 @@ const SECRET_ENV_KEYS: &[&str] =
 pub fn report(app: &AppHandle, db: &Db) -> String {
     let mut out = String::new();
     out.push_str(
-        "# Limusic diagnostics. Paste this into your bug report.\n\
+        "# MithenMusic diagnostics. Paste this into your bug report.\n\
          # Cookies, tokens, signed URLs, file paths and IP addresses have been removed.\n\n",
     );
     out.push_str(&redact(&header(app, db)));
@@ -88,7 +88,7 @@ fn header(app: &AppHandle, db: &Db) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "Limusic {} ({} {}, {})",
+        "MithenMusic {} ({} {}, {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -171,20 +171,10 @@ fn yes_no(b: bool) -> &'static str {
     }
 }
 
-/// How this copy was installed, which decides whether the in-app updater can do anything and how
-/// the user should update. Mirrors [`crate::commands::can_self_update`]'s reasoning.
+/// How this copy was installed, for the diagnostics header.
 fn install_kind(app: &AppHandle) -> &'static str {
     if cfg!(debug_assertions) {
         return "dev build";
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if app.env().appimage.is_some() {
-            return "AppImage";
-        }
-        if std::env::current_exe().is_ok_and(|p| p.starts_with("/usr")) {
-            return "system package";
-        }
     }
     let _ = app;
     "installed"
@@ -192,14 +182,14 @@ fn install_kind(app: &AppHandle) -> &'static str {
 
 /// The log to include: this run, preceded by the previous one when this run has barely started.
 fn log_text(dir: &Path, budget: usize) -> String {
-    let current = dir.join("limusic.log");
-    let previous = dir.join("limusic.log.1");
+    let current = dir.join("mithenmusic.log");
+    let previous = dir.join("mithenmusic.log.1");
     let mut text = String::new();
     if std::fs::metadata(&current).map(|m| m.len()).unwrap_or(0) < FRESH_LOG_BYTES {
         if let Some(t) = tail(&previous, budget / 2) {
-            text.push_str("=== previous run (limusic.log.1) ===\n");
+            text.push_str("=== previous run (mithenmusic.log.1) ===\n");
             text.push_str(&t);
-            text.push_str("\n=== this run (limusic.log) ===\n");
+            text.push_str("\n=== this run (mithenmusic.log) ===\n");
         }
     }
     let left = budget.saturating_sub(text.len());
@@ -334,14 +324,14 @@ mod tests {
     #[test]
     fn redaction_leaves_the_header_readable() {
         let header = concat!(
-            "Limusic 0.7.3 (linux x86_64, AppImage)\n",
+            "MithenMusic 0.7.3 (linux x86_64, AppImage)\n",
             "System: Fedora Linux 44 (KDE Plasma), kernel 7.1.8-200.fc44.x86_64, wayland session on KDE\n",
             "WebKitGTK: 2.50.6, NVIDIA: yes\n",
             "Signed in: yes | Proxy: no | Quality: HIGH | Normalize: yes | Music videos: yes | Disabled clients: none\n",
         );
         let out = redact(header);
         for kept in [
-            "Limusic 0.7.3",
+            "MithenMusic 0.7.3",
             "Fedora Linux 44",
             "7.1.8-200.fc44.x86_64",
             "WebKitGTK: 2.50.6",

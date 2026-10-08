@@ -1,6 +1,6 @@
 <script lang="ts">
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
+	import logo from '$lib/assets/logo.png';
 	import { ModeWatcher, mode } from 'mode-watcher';
 	import { HugeiconsIcon } from '@hugeicons/svelte';
 	import {
@@ -38,7 +38,6 @@
 	import SettingsDialog from '$lib/components/SettingsDialog.svelte';
 	import ShareDialog from '$lib/components/ShareDialog.svelte';
 	import ChannelPicker from '$lib/components/ChannelPicker.svelte';
-	import ListenTogether from '$lib/components/ListenTogether.svelte';
 	import LinkDialog from '$lib/components/LinkDialog.svelte';
 	import ImportDialog from '$lib/components/ImportDialog.svelte';
 	import { handleImportDrop, initImport } from '$lib/import.svelte';
@@ -55,14 +54,6 @@
 	import { initZoom } from '$lib/zoom.svelte';
 	import { initShortcuts } from '$lib/shortcuts';
 	import { initErrorLog } from '$lib/errlog';
-	import {
-		updateState,
-		availableMessage,
-		installUpdate,
-		openDownloadPage,
-		checkForUpdatesQuiet,
-		QUIET_INTERVAL_MS
-	} from '$lib/updater.svelte';
 
 	// SvelteKit's `snapshot` keys a saved scroll to the *history entry*: two visits to the same URL
 	// each restore the position they left at, where a URL→scroll Map would collapse both onto the
@@ -201,16 +192,11 @@
 		}
 		// First: it reveals the window (see initWin).
 		const teardownWin = initWin();
-		checkForUpdatesQuiet();
-		// Repeat while the app stays open: ✕ hides to tray by default, so this component can stay
-		// mounted for days and a mount-only check would never see a release published in between.
-		const updateTimer = setInterval(checkForUpdatesQuiet, QUIET_INTERVAL_MS);
 		const teardownApp = initApp();
 		const teardownZoom = initZoom();
 		const teardownShortcuts = initShortcuts();
 		initImport();
 		return () => {
-			clearInterval(updateTimer);
 			teardownApp();
 			teardownWin();
 			teardownZoom();
@@ -230,7 +216,7 @@
 	oncontextmenu={suppressNative}
 />
 
-<svelte:head><link rel="icon" href={favicon} /></svelte:head>
+<svelte:head><link rel="icon" href={logo} /></svelte:head>
 <ModeWatcher />
 
 <!-- The mini player is the whole window when it is the window: no titlebar, no sidebar, no routes,
@@ -322,41 +308,11 @@
 	<ShareDialog />
 	<SettingsDialog />
 	<ChannelPicker />
-	<ListenTogether />
 	<LinkDialog />
 	<ImportDialog />
 
-	<!-- The two notification banners below run at z-[100]. Dialogs and menus sit at z-50 and portal to
+	<!-- The notification banner below runs at z-[100]. Dialogs and menus sit at z-50 and portal to
 	     <body>, so a z-50 banner loses the tie on DOM order and hides behind an open modal. -->
-	{#if updateState.available}
-		<div
-			transition:fly={{ y: 16, duration: 220, easing: cubicOut }}
-			class="fixed bottom-24 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-3 rounded-lg border bg-card px-4 py-2 text-sm shadow-lg"
-		>
-			<span>{availableMessage(updateState.available)}</span>
-			{#if updateState.canInstall}
-				<Button size="sm" onclick={installUpdate} disabled={updateState.installing}>
-					{updateState.installing ? t('common.loading') : t('settings.about.install_update')}
-				</Button>
-			{:else}
-				<!-- Packaged build (.rpm, AUR): the updater can only rewrite an AppImage, so send them
-				     to the releases page and let their package manager do it. -->
-				<Button size="sm" onclick={openDownloadPage}>{t('settings.about.download_page')}</Button>
-			{/if}
-			{#if !updateState.installing}
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					class="-mr-2 text-muted-foreground hover:text-foreground"
-					aria-label={t('common.close')}
-					onclick={() => (updateState.available = null)}
-				>
-					<HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-				</Button>
-			{/if}
-		</div>
-	{/if}
-
 	{#if ui.toast}
 		{@const t = ui.toast}
 		<div

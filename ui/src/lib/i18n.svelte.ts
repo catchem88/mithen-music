@@ -18,7 +18,7 @@ type NestedKeyOf<ObjectType extends object> = {
 
 export type TranslationKey = NestedKeyOf<Translations>;
 
-const LOCALE_STORAGE_KEY = 'limusic_locale';
+const LOCALE_STORAGE_KEY = 'mithenmusic_locale';
 
 /**
  * The saved language, else the system one if we have a catalog for it, else English.
@@ -71,6 +71,24 @@ export const currentLocale = {
 		return activeLocale;
 	}
 };
+
+/**
+ * Adopt the language the installer chose, when this profile has none saved yet. Returns true when
+ * it took. The installer writes it into the DB; the picker is gone, so this is the one place a
+ * fresh install learns its language.
+ */
+export function adoptInstalledLocale(locale: string): boolean {
+	if (!browser) return false;
+	if (!Object.hasOwn(translations, locale)) return false;
+	if (localStorage.getItem(LOCALE_STORAGE_KEY)) return false;
+	activeLocale = locale as LocaleId;
+	try {
+		localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+	} catch {
+		/* a blocked store just means it re-adopts next launch */
+	}
+	return true;
+}
 
 function getNestedValue(obj: unknown, path: string): unknown {
 	return path.split('.').reduce<unknown>((acc, part) => (acc as any)?.[part], obj);

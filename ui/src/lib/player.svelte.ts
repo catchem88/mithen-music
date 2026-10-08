@@ -12,14 +12,12 @@ import type {
 	Rating,
 	SongItem
 } from './api';
-import { applyLtState, lt } from './lt.svelte';
 import { clearCached, invalidateCached, LIBRARY_SONGS_KEY } from './pagecache';
 import * as pl from './personal';
 import type { Personal } from './personal';
 import { appearance } from './theme.svelte';
-import { currentLocale, pushLocaleToRust, t } from './i18n.svelte';
+import { adoptInstalledLocale, currentLocale, pushLocaleToRust, t } from './i18n.svelte';
 import { friendlyNetError } from './neterr';
-import { parseScrobbleConfig } from './scrobble';
 
 export const playback = $state({
 	now: null as NowPlaying | null,
@@ -57,20 +55,17 @@ export const np = $state({ open: false, tab: 'queue' as 'queue' | 'lyrics' });
  */
 export const prefs = $state({
 	musicVideos: false,
-	/** `discord_rpc`. Two places toggle it (the titlebar button and the Discord settings tab) and
-	 *  each drew its own indicator, so turning it off in one left the other stale. One owner. */
-	discordRpc: false,
 	/** Linux: mpv draws the music video under the page (nativevideo.rs) instead of a `<video>`
 	 *  element. Cleared if it turns out there is no GL surface, which hands the picture back. */
 	nativeVideo: false,
 	/** `ambient_light`: the player view glows with the music video's colours (Ambient.svelte). */
 	ambient: false,
+	/** `enable_history`: watch-history ping + local play-count tracking. Off hides the Home
+	 *  history button and the On Repeat tile. */
+	history: false,
 	/** `autoplay`: the queue keeps going with similar songs. Switched from the queue panel as well
 	 *  as Settings, so both read it here. */
-	autoplay: true,
-	/** The Scrobbling tab's on switch (`lastfm_config.enabled`). The track menu offers "Edit
-	 *  scrobble" only while it is on, so a user who paused scrobbling isn't shown it. */
-	scrobbling: true
+	autoplay: true
 });
 
 /** Rust drops the upcoming autoplay tracks when this goes off, and tops a short queue up when it
@@ -134,6 +129,20 @@ export const openPlayer = () => {
 /** Play one track (a search row, a song card, a shelf), and show it. */
 export function playSong(song: SongItem) {
 	openPlayer();
+	return api.play(song);
+}
+
+/**
+ * Play a single file the OS handed us (a double-click or "Open with"). Always opens the player
+ * view, turns repeat off, and plays just that file — no playlist, no radio.
+ */
+export async function playLocalFile(song: SongItem): Promise<void> {
+	np.open = true;
+	try {
+		await api.setRepeat('off');
+	} catch {
+		/* when the repeat write fails, the file still plays */
+	}
 	return api.play(song);
 }
 
@@ -506,7 +515,7 @@ export async function unblockArtist(entry: api.BlockedArtist) {
 // `UI_SETTINGS` allowlist entry would buy nothing. Loaded at module scope (guarded like the layout's
 // `initTheme`) so the sidebar and home grid render sorted on the very first paint.
 // ponytail: move to db.rs if it ever needs to be account-scoped or readable outside the webview.
-const PERSONAL_KEY = 'limusic:personal';
+const PERSONAL_KEY = 'mithenmusic:personal';
 
 export const personal = $state<Personal>(pl.empty());
 
@@ -556,6 +565,8 @@ const ON_REPEAT_SEED_MIN = 5;
  * built from local SQLite, so the fetch never touches the network.
  */
 export async function seedOnRepeatPick() {
+	// History off means no On Repeat tile and no play-count tracking behind it.
+	if (!prefs.history) return;
 	try {
 		const onRepeat = await api.getPlaylist(api.ON_REPEAT_ID);
 		if (onRepeat.items.length < ON_REPEAT_SEED_MIN) return;
@@ -598,19 +609,6 @@ export function noteHomeSections(titles: string[]) {
 /** Called from every card click app-wide, so only persist when the id was actually on the grid. */
 export function touchPick(id: string) {
 	if (pl.touchPick(personal, id)) savePersonal();
-}
-
-/** The search page's history: a query it ran, one the user took out, or all of them. */
-export function noteSearch(query: string) {
-	if (pl.noteSearch(personal, query)) savePersonal();
-}
-export function forgetSearch(query: string) {
-	pl.forgetSearch(personal, query);
-	savePersonal();
-}
-export function clearSearches() {
-	personal.searches = [];
-	savePersonal();
 }
 
 /**
@@ -1138,7 +1136,6 @@ export async function enqueue(
 		toast.error(String(e));
 		return;
 	}
-	if (lt.role === 'guest') return;
 	const n = items.length;
 	if (next)
 		toast.success(n === 1 ? t('toasts.playing_next_one') : t('toasts.playing_next', { count: n }));
@@ -1175,9 +1172,7 @@ export const ui = $state({
 	share: null as BrowseItem | null, // the share modal's target
 	toast: null as Toast | null,
 	settingsOpen: false, // the settings modal
-	settingsFocus: null as 'lyrics' | 'scrobbling' | null, // a section to open settings on, once
-	scrobbleTrack: null as SongItem | null, // "Edit scrobble" from a track menu: the track to edit
-	ltOpen: false, // the Listen Together modal
+	settingsFocus: null as 'lyrics' | null, // a section to open settings on, once
 	linkOpen: false, // the "open a pasted link" modal
 	paletteOpen: false, // the Ctrl+K search palette
 	theaterOpen: false, // fullscreen theater view (artwork + lyrics and/or queue)
@@ -1462,8 +1457,7 @@ export function notePlaylistAdd(playlistId: string, songs: SongItem[]) {
 		autoplay: undefined,
 		queued: undefined,
 		queued_end: undefined,
-		queued_from: undefined,
-		queued_by: undefined
+		queued_from: undefined
 	}));
 	lastPlaylistAdd.epoch++;
 }
@@ -1573,16 +1567,7 @@ export function initApp(mini = false): () => void {
 		}),
 		api.onAccountSelectionRequired(() => openChannelPicker(true)),
 		api.onLoginError((msg) => toast.error(msg)),
-		api.onLoginDone(() => toast.success(t('toasts.signed_in'))),
-		// Listen Together (context/19): mirror the Rust session state; surface notices as toasts.
-		api.onLtState((s) => {
-			// A room is a shared clock, so tempo is off while one is on (the stepper hides itself).
-			// Dropping back to 1x here too, or a speed set before joining strands you off the beat
-			// with no visible control to undo it.
-			if (s.role !== 'none' && playback.speed !== 1) setTempoPitch(1, playback.semitones);
-			applyLtState(s);
-		}),
-		api.onLtNotice((msg) => toast(msg))
+		api.onLoginDone(() => toast.success(t('toasts.signed_in')))
 	];
 	const teardown = () => subs.forEach((u) => u.then((f) => f()));
 	api.getQueue()
@@ -1609,15 +1594,16 @@ export function initApp(mini = false): () => void {
 			prefs.musicVideos = s.music_videos === 'true';
 			prefs.nativeVideo = s.native_video === 'true';
 			prefs.ambient = s.ambient_light === 'true';
-			prefs.discordRpc = s.discord_rpc === 'true';
+			prefs.history = s.enable_history === 'true';
 			prefs.autoplay = s.autoplay !== 'false';
-			prefs.scrobbling = parseScrobbleConfig(s.lastfm_config).enabled;
 			// Half of what the app shows is YouTube's own text, and Rust asks for it in the language
 			// this setting holds (#274). It reads the setting at startup, before the SPA exists to
 			// tell it anything, so the two disagree on a fresh install, on a language taken from the
 			// system, and on the first launch after this shipped. Put it right and refetch: the pages
 			// already on screen were painted in the stale language.
-			if (s.locale !== currentLocale.id) {
+			if (adoptInstalledLocale(s.locale)) {
+				// First run: the installer's language becomes ours; nothing to push back.
+			} else if (s.locale !== currentLocale.id) {
 				pushLocaleToRust(currentLocale.id).then(refreshView);
 			}
 		})
@@ -1641,7 +1627,5 @@ export function initApp(mini = false): () => void {
 	// point, prunes shortcuts for music that was deleted while the app was closed.
 	scanLocal();
 	loadBlocked();
-	// Seed the Listen Together state (server URL, any active room after a UI reload).
-	api.ltGetState().then(applyLtState).catch(() => {});
 	return teardown;
 }

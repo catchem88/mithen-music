@@ -3,13 +3,12 @@ resolver = "2"
 members = [
     "crates/innertube",
     "crates/player",
-    "crates/listen-protocol",
-    "crates/sync-server",
+    "crates/thumbnail-provider",
     "src-tauri",
 ]
 
 [workspace.package]
-version = "1.2.0-rc.3"
+version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
@@ -22,7 +21,6 @@ anyhow = "1"
 thiserror = "2"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rand = "0.8"
-listen-protocol = { path = "crates/listen-protocol" }
 
 # Release profile: thin LTO + one codegen unit for cross-crate optimization, symbols stripped
 # for size (this binary ships via AppImage self-update — size = every user's download).
@@ -32,3 +30,17 @@ listen-protocol = { path = "crates/listen-protocol" }
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Iteration profile: the develop/run loop for the YouTube-facing code (innertube, cipher, potoken),
+# which is statically linked, so any change forces a relink of the whole 112 MB binary. Same runtime
+# shape as release (opt-level 3, no debug assertions) but WITHOUT the thin-LTO + one-codegen-unit
+# link that makes each release build take minutes. Build with `scripts/dev-run.ps1` (or
+# `cargo build --profile fast -p mithenmusic-app`) and run target/fast/mithenmusic-app.exe. Ship with
+# `release`; never ship this one.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+strip = "none"
+debug = 1

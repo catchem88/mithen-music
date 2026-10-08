@@ -463,24 +463,6 @@ export const setGlobalHotkeys = (config: HotkeysConfig) =>
 	invoke<HotkeyRegisterResult>('set_global_hotkeys', { config });
 export const resetGlobalHotkeys = () => invoke<HotkeyRegisterResult>('reset_global_hotkeys');
 
-/** One published release: the GitHub release description, verbatim markdown. */
-export interface ReleaseNote {
-	version: string;
-	/** `YYYY-MM-DD` */
-	date: string;
-	body: string;
-}
-/** Changelog for Settings > About, from the GitHub releases API (cached in Rust per run). */
-export const releaseNotes = () => invoke<ReleaseNote[]>('release_notes');
-/** False on Linux builds that aren't the AppImage (.rpm, the AUR package): they update through the
- *  package manager, so the UI offers a download link instead of an install button. */
-export const canSelfUpdate = () => invoke<boolean>('can_self_update');
-/** The updater plugin's `check()` against the beta channel's manifest, as the metadata the
- *  plugin's `Update` class is built from. `null` when this build is what the channel offers. */
-export const checkBetaUpdate = () =>
-	invoke<ConstructorParameters<typeof import('@tauri-apps/plugin-updater').Update>[0] | null>(
-		'check_beta_update'
-	);
 /** Open an http(s) link in the real browser, never in the webview itself. */
 export const openExternal = (url: string) => invoke<void>('open_external', { url });
 
@@ -660,6 +642,8 @@ export const getBrowseGrid = (id: string, params?: string) =>
 /** Rescan the watched folders. Cheap when nothing changed (one stat per file). */
 export const getLocalLibrary = () => invoke<LocalLibrary>('get_local_library');
 export const addLocalFolder = (path: string) => invoke<LocalLibrary>('add_local_folder', { path });
+/** Read one audio file the OS handed us (double-click) into the library and return it to play. */
+export const openLocalFile = (path: string) => invoke<SongItem>('open_local_file', { path });
 export const removeLocalFolder = (path: string) =>
 	invoke<LocalLibrary>('remove_local_folder', { path });
 
@@ -964,114 +948,3 @@ export const lyricsProviders = () => invoke<LyricsProvider[]>('lyrics_providers'
  *  thread. Rust also puts the maximized state back when theater closes. */
 export const theaterFullscreen = (on: boolean) => invoke<void>('theater_fullscreen', { on });
 
-// --- Last.fm scrobbling ---------------------------------------------------------------------
-export interface LastfmState {
-	connected: boolean;
-	username?: string | null;
-	/** Set when a connect attempt failed (timeout, network, rejected) — show it as a toast. */
-	error?: string | null;
-}
-export const lastfmStatus = () => invoke<LastfmState>('lastfm_status');
-/** Opens the browser auth flow; the outcome arrives via onLastfmState, not this promise. */
-export const lastfmConnect = () => invoke<void>('lastfm_connect');
-/** Also cancels an in-flight connect (the auth poll checks and bails). */
-export const lastfmDisconnect = () => invoke<void>('lastfm_disconnect');
-export const onLastfmState = (cb: (s: LastfmState) => void): Promise<UnlistenFn> =>
-	listen<LastfmState>('lastfm-state', (e) => cb(e.payload));
-/** `Profile` in lastfm.rs. Counts are 0 when Last.fm left them out. */
-export interface LastfmProfile {
-	image: string | null;
-	url: string | null;
-	scrobbles: number;
-	artists: number;
-	tracks: number;
-	/** Epoch seconds the account was created. */
-	since: number;
-}
-/** `null` when not connected or Last.fm didn't answer. */
-export const lastfmProfile = () => invoke<LastfmProfile | null>('lastfm_profile');
-/** The track fields the scrobbler reads. A `SongItem` is one. */
-export interface ScrobbleTrack {
-	video_id: string;
-	title: string;
-	artists: string;
-	album?: string | null;
-	is_video?: boolean;
-}
-/** `Resolved` in lastfm.rs: what a track scrobbles as, and which settings made it so. */
-export interface ScrobblePreview {
-	artist: string;
-	title: string;
-	album: string;
-	skip: 'edit' | 'incomplete' | null;
-	edit: number | null;
-	split: boolean;
-	rules: number[];
-	errors: [number, string][];
-}
-/** `config` is the Scrobbling tab's state as JSON, saved or not. */
-export const lastfmPreview = (config: string, track: ScrobbleTrack) =>
-	invoke<ScrobblePreview>('lastfm_preview', { config, track });
-
-// --- Listen Together (context/19) -----------------------------------------------------------
-export interface LtUser {
-	user_id: string;
-	username: string;
-	is_host: boolean;
-	is_connected: boolean;
-}
-export interface LtTrack {
-	id: string;
-	title: string;
-	artist: string;
-	thumbnail?: string | null;
-	duration_ms: number;
-	/** Name of the guest who added this track to the session queue. */
-	queued_by?: string | null;
-}
-export interface LtPendingJoin {
-	userId: string;
-	username: string;
-}
-export interface LtSuggestion {
-	id: string;
-	from_user_id: string;
-	from_username: string;
-	track: LtTrack;
-}
-export interface LtState {
-	status: 'disconnected' | 'connecting' | 'connected';
-	role: 'none' | 'host' | 'guest';
-	/** Asked to create/join and awaiting the room (host approval) — show a waiting state. */
-	requesting: boolean;
-	roomCode: string | null;
-	myId: string | null;
-	/** Empty means the built-in default; the backend resolves it when it connects. */
-	serverUrl: string;
-	/** What that default is. Only ever rendered inside the "change server" panel. */
-	defaultServerUrl: string;
-	users: LtUser[];
-	currentTrack: LtTrack | null;
-	queue: LtTrack[];
-	pendingJoins: LtPendingJoin[];
-	suggestions: LtSuggestion[];
-}
-
-export const ltGetState = () => invoke<LtState>('lt_get_state');
-export const ltSetServerUrl = (url: string) => invoke<void>('lt_set_server_url', { url });
-export const ltCreateRoom = (username: string) => invoke<void>('lt_create_room', { username });
-export const ltJoinRoom = (code: string, username: string) =>
-	invoke<void>('lt_join_room', { code, username });
-export const ltLeave = () => invoke<void>('lt_leave');
-export const ltApproveJoin = (userId: string) => invoke<void>('lt_approve_join', { userId });
-export const ltRejectJoin = (userId: string) => invoke<void>('lt_reject_join', { userId });
-export const ltKick = (userId: string) => invoke<void>('lt_kick', { userId });
-export const ltTransferHost = (userId: string) => invoke<void>('lt_transfer_host', { userId });
-export const ltApproveSuggestion = (id: string) => invoke<void>('lt_approve_suggestion', { id });
-export const ltRejectSuggestion = (id: string) => invoke<void>('lt_reject_suggestion', { id });
-export const ltRequestSync = () => invoke<void>('lt_request_sync');
-
-export const onLtState = (cb: (s: LtState) => void): Promise<UnlistenFn> =>
-	listen<LtState>('lt-state', (e) => cb(e.payload));
-export const onLtNotice = (cb: (msg: string) => void): Promise<UnlistenFn> =>
-	listen<string>('lt-notice', (e) => cb(e.payload));

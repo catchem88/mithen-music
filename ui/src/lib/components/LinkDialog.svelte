@@ -6,10 +6,10 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { onOpenLink, takeLaunchArgs } from '$lib/api';
+	import { onOpenLink, openLocalFile, takeLaunchArgs } from '$lib/api';
 	import { hrefFor } from '$lib/browse';
-	import { parseYtLink, type LinkTarget } from '$lib/ytlink';
-	import { startRadio, toast, ui } from '$lib/player.svelte';
+	import { isAudioPath, parseYtLink, type LinkTarget } from '$lib/ytlink';
+	import { playLocalFile, startRadio, toast, ui } from '$lib/player.svelte';
 	import { t } from '$lib/i18n.svelte';
 	import { isSpotifyLink, openSpotifyLink } from '$lib/import.svelte';
 
@@ -51,8 +51,19 @@
 			const spotify = given.find(isSpotifyLink);
 			if (spotify) return openSpotifyLink(spotify);
 			const target = given.map(parseYtLink).find((x) => x);
-			if (target) open(target);
-			else toast.error(t('dialogs.link.invalid_link'));
+			if (target) {
+				open(target);
+				return;
+			}
+			// A file path from the OS (double-clicking a supported audio file) opens and plays.
+			const file = given.find(isAudioPath);
+			if (file) {
+				openLocalFile(file)
+					.then((song) => playLocalFile(song))
+					.catch(() => toast.error(t('dialogs.link.invalid_link')));
+				return;
+			}
+			toast.error(t('dialogs.link.invalid_link'));
 		};
 		const un = onOpenLink(fromArgs);
 		takeLaunchArgs()

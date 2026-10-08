@@ -84,7 +84,7 @@
 		"history": "Istoric",
 		"add_account": "Adaugă cont",
 		"remove_account": "Elimină cont",
-		"remove_account_title": "Elimini din Limusic?",
+		"remove_account_title": "Elimini din MithenMusic?",
 		"remove_account_desc": "{name} este eliminat doar din această listă. Contul Google nu este afectat și te poți reconecta oricând.",
 		"saved_accounts_hint": "Alege un cont salvat pentru a comuta la el.",
 		"no_channels": "YouTube nu a returnat niciun canal selectabil."
@@ -323,26 +323,26 @@
 			"language_hint": "Selectează limba de afișare a interfeței.",
 			"shortcuts_hint": "Deschide lista scurtăturilor de tastatură cu {key}",
 			"autostart": "Lansează la pornirea sistemului",
-			"autostart_hint": "Pornește automat Limusic odată cu pornirea sistemului.",
+			"autostart_hint": "Pornește automat MithenMusic odată cu pornirea sistemului.",
 			"close_to_tray": "Minimizează în bara de sistem la închidere",
-			"close_to_tray_hint": "Menține Limusic în rulare în fundal când fereastra este închisă.",
+			"close_to_tray_hint": "Menține MithenMusic în rulare în fundal când fereastra este închisă.",
 			"discord_rpc": "Discord Rich Presence",
 			"discord_rpc_hint": "Afișează melodia redată în timp real pe profilul tău Discord.",
 			"update_banner": "Notificări de actualizare",
-			"update_banner_hint": "Afișează un banner când este disponibilă o nouă versiune de Limusic.",
+			"update_banner_hint": "Afișează un banner când este disponibilă o nouă versiune de MithenMusic.",
 			"proxy": "Proxy HTTP/HTTPS",
 			"proxy_hint": "Direcționează toate cererile de rețea printr-un server proxy personalizat.",
 			"proxy_placeholder": "http://host:port (gol = niciunul)",
 			"stream_clients": "Clienți de streaming",
 			"stream_clients_hint": "Dezactivează un client pentru a-l exclude la rezolvarea fluxurilor. Este suprascris de variabila de mediu {var}.",
 			"system_titlebar": "Folosește bara de titlu a sistemului",
-			"system_titlebar_hint": "Permite sistemului să deseneze cadrul ferestrei și butoanele acesteia. Limusic își păstrează propria bară dedesubt.",
+			"system_titlebar_hint": "Permite sistemului să deseneze cadrul ferestrei și butoanele acesteia. MithenMusic își păstrează propria bară dedesubt.",
 			"language_search": "Caută limbi",
-			"language_contribute": "Ajută la traducerea Limusic",
+			"language_contribute": "Ajută la traducerea MithenMusic",
 			"track_notifications": "Notificări melodie",
-			"track_notifications_hint": "Afișează o notificare când începe o nouă melodie dacă Limusic este în fundal.",
+			"track_notifications_hint": "Afișează o notificare când începe o nouă melodie dacă MithenMusic este în fundal.",
 			"start_minimized": "Pornește minimizat în bara de sistem",
-			"start_minimized_hint": "Când Limusic pornește odată cu sistemul, rămâne în bara de sistem până îl deschizi. Deschiderea manuală afișează întotdeauna fereastra."
+			"start_minimized_hint": "Când MithenMusic pornește odată cu sistemul, rămâne în bara de sistem până îl deschizi. Deschiderea manuală afișează întotdeauna fereastra."
 		},
 		"themes": {
 			"interface_font": "Font interfață",
@@ -465,7 +465,7 @@
 			"report_issue_hint": "Deschide GitHub în browser, cu versiunea și datele sistemului deja completate.",
 			"report_issue_button": "Raportează",
 			"kofi": "Cumpără-mi o cafea",
-			"kofi_hint": "Limusic este gratuit și va rămâne gratuit. Ko-fi este disponibil dacă dorești să susții proiectul.",
+			"kofi_hint": "MithenMusic este gratuit și va rămâne gratuit. Ko-fi este disponibil dacă dorești să susții proiectul.",
 			"kofi_button": "Deschide Ko-fi",
 			"rollback_available": "Se revine la versiunea {version}, ultima versiune stabilă cunoscută.",
 			"beta": "Versiuni Beta",
@@ -473,7 +473,7 @@
 		},
 		"hotkeys": {
 			"title": "Scurtături globale de tastatură",
-			"description": "Controlează redarea prin scurtături personalizabile chiar și atunci când Limusic este minimizat sau rulează în fundal.",
+			"description": "Controlează redarea prin scurtături personalizabile chiar și atunci când MithenMusic este minimizat sau rulează în fundal.",
 			"enable": "Activează scurtăturile globale",
 			"enable_hint": "Scurtăturile globale sunt dezactivate. Activează-le pentru a asculta tastele la nivelul întregului sistem.",
 			"off": "Dezactivat",
@@ -508,7 +508,7 @@
 			"action_toggle_repeat": "Comută repetarea",
 			"action_toggle_repeat_hint": "Schimbă modul de repetare: oprit, tot, o piesă.",
 			"action_show_app": "Afișează aplicația",
-			"action_show_app_hint": "Aduce fereastra Limusic în prim-plan."
+			"action_show_app_hint": "Aduce fereastra MithenMusic în prim-plan."
 		},
 		"discord": {
 			"enable": "Rich Presence",
@@ -524,8 +524,8 @@
 			"status_line1": "Rândul 1",
 			"status_line2": "Rândul 2",
 			"app_name": "Numele aplicației",
-			"app_name_hint": "Înlocuiește „Limusic” oriunde apare numele aplicației. Lasă gol pentru a-l păstra pe cel implicit.",
-			"app_name_placeholder": "Limusic",
+			"app_name_hint": "Înlocuiește „MithenMusic” oriunde apare numele aplicației. Lasă gol pentru a-l păstra pe cel implicit.",
+			"app_name_placeholder": "MithenMusic",
 			"line1": "Rândul 1",
 			"line1_hint": "Rândul îngroșat, aflat chiar sub antet.",
 			"line2": "Rândul 2",
@@ -538,7 +538,7 @@
 			"cover": "Copertă album",
 			"cover_hint": "Afișează imaginea copertei lângă piesă.",
 			"badge": "Insignă furnizor",
-			"badge_hint": "Marchează coperta cu o mică pictogramă Limusic, la fel ca pe cardurile Spotify și Apple Music.",
+			"badge_hint": "Marchează coperta cu o mică pictogramă MithenMusic, la fel ca pe cardurile Spotify și Apple Music.",
 			"line3": "Rândul 3",
 			"line3_hint": "Ultimul rând. Discord îl folosește și ca text informativ la trecerea mouse-ului peste copertă, necesitând afișarea copertei.",
 			"timestamps": "Bară de progres",
@@ -553,7 +553,7 @@
 			"button_listen": "Ascultă pe YouTube Music",
 			"button_album": "Vezi albumul",
 			"button_artist": "Vezi artistul",
-			"button_app": "Obține Limusic",
+			"button_app": "Obține MithenMusic",
 			"button_off": "Niciunul",
 			"preview": "Previzualizare",
 			"preview_live": "În redare",
@@ -691,7 +691,7 @@
 		"discord_tooltip_off": "Afișează ce asculți pe Discord",
 		"lastfm_scrobbling_as": "Scrobbling ca {user}",
 		"lastfm_disconnected": "Last.fm deconectat",
-		"lastfm_approve_in_browser": "Autorizează Limusic în browserul tău",
+		"lastfm_approve_in_browser": "Autorizează MithenMusic în browserul tău",
 		"lastfm_connecting": "Se conectează la Last.fm — apasă pentru a anula",
 		"lastfm_scrobble_to": "Scrobble în Last.fm",
 		"disconnect": "Deconectează"
@@ -919,7 +919,7 @@
 	"errors": {
 		"unreachable": "Nu se poate contacta YouTube Music. Verifică conexiunea la internet.",
 		"offline_title": "Lipsă conexiune",
-		"offline_body": "Limusic nu se poate conecta la YouTube Music. Verifică conexiunea la internet, apoi încearcă din nou.",
+		"offline_body": "MithenMusic nu se poate conecta la YouTube Music. Verifică conexiunea la internet, apoi încearcă din nou.",
 		"generic_title": "Ceva nu a funcționat"
 	}
 }

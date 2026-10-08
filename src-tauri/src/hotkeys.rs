@@ -1,8 +1,8 @@
-//! System-wide global hotkeys management for Limusic.
+//! System-wide global hotkeys management for MithenMusic.
 //!
 //! Uses `tauri-plugin-global-shortcut` to listen for keyboard events at the OS level
 //! (e.g. Windows `RegisterHotKey`), allowing users to control playback even when
-//! Limusic is minimized to the system tray or running in the background.
+//! MithenMusic is minimized to the system tray or running in the background.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -46,19 +46,20 @@ pub struct HotkeysConfig {
 }
 
 impl Default for HotkeysConfig {
-    // Mute, shuffle and repeat start unbound: Windows sends AltGr as Ctrl+Alt, so a Ctrl+Alt+letter
-    // default would take a character (Polish ś, German µ) from every app once hotkeys are on.
+    // Mute, shuffle and repeat start unbound. Windows sends AltGr as Ctrl+Alt, so a Ctrl+Alt+letter
+    // default would take a character (Polish ś, German µ) from every app; the transport keys use
+    // Ctrl+Space / Ctrl+letter instead, and the seek keys stay on Ctrl+Alt+PageUp/Down.
     fn default() -> Self {
         let mut bindings = HashMap::new();
-        bindings.insert(HotkeyAction::PlayPause, "Ctrl+Alt+Space".into());
-        bindings.insert(HotkeyAction::NextTrack, "Ctrl+Alt+Right".into());
-        bindings.insert(HotkeyAction::PrevTrack, "Ctrl+Alt+Left".into());
-        bindings.insert(HotkeyAction::VolumeUp, "Ctrl+Alt+Up".into());
-        bindings.insert(HotkeyAction::VolumeDown, "Ctrl+Alt+Down".into());
+        bindings.insert(HotkeyAction::PlayPause, "Ctrl+Space".into());
+        bindings.insert(HotkeyAction::NextTrack, "Ctrl+N".into());
+        bindings.insert(HotkeyAction::PrevTrack, "Ctrl+P".into());
+        bindings.insert(HotkeyAction::VolumeUp, "Ctrl+=".into());
+        bindings.insert(HotkeyAction::VolumeDown, "Ctrl+-".into());
         bindings.insert(HotkeyAction::SeekForward, "Ctrl+Alt+PageUp".into());
         bindings.insert(HotkeyAction::SeekBackward, "Ctrl+Alt+PageDown".into());
-        bindings.insert(HotkeyAction::ShowApp, "Ctrl+Alt+Home".into());
-        Self { enabled: false, bindings }
+        bindings.insert(HotkeyAction::ShowApp, "Ctrl+Alt+W".into());
+        Self { enabled: true, bindings }
     }
 }
 
@@ -214,7 +215,7 @@ pub fn execute_action(app: &AppHandle, action: HotkeyAction) {
                 state.cycle_repeat().await;
             }
             HotkeyAction::ShowApp => {
-                crate::tray::show_main(&app);
+                crate::tray::toggle_main(&app);
             }
         }
     });

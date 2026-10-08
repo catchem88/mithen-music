@@ -44,6 +44,7 @@
 	<input
 		bind:value
 		{placeholder}
+		data-search-input
 		aria-label={placeholder}
 		{onfocus}
 		class="w-48 min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"

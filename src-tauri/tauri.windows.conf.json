@@ -1,7 +1,33 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "targets": ["nsis", "msi"],
-    "resources": ["libmpv-2.dll"]
+    "targets": ["nsis"],
+    "resources": ["libmpv-2.dll", "mithenmusic-thumbnail.dll"],
+    "publisher": "MithenApps",
+    "copyright": "Copyright © 2026 MithenApps",
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "displayLanguageSelector": true,
+        "languages": [
+          "English",
+          "Spanish",
+          "French",
+          "Turkish",
+          "PortugueseBR",
+          "Indonesian",
+          "Romanian",
+          "Korean",
+          "Russian",
+          "Ukrainian",
+          "TradChinese",
+          "Polish",
+          "German",
+          "Italian",
+          "Japanese"
+        ],
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
   }
 }

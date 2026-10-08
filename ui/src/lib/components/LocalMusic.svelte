@@ -40,7 +40,7 @@
 		scanLocal();
 	});
 
-	let view = $state('albums');
+	let view = $state('songs');
 	// A local collection can be thousands of files, and WebKitGTK does not enjoy thousands of rows.
 	// Render a page at a time — Play all and Shuffle still take every song in the list.
 	const PAGE = 100;
@@ -163,11 +163,11 @@
 			<!-- The counts follow the filter, so the tabs say where the matches are. -->
 			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 				<Tabs.List>
-					<Tabs.Trigger value="albums">{t('local.albums_count', { count: albums.length })}</Tabs.Trigger>
-					<Tabs.Trigger value="artists">{t('local.artists_count', { count: artists.length })}</Tabs.Trigger>
 					<Tabs.Trigger value="songs">{t('local.songs_count', { count: songs.length })}</Tabs.Trigger>
+					<Tabs.Trigger value="artists">{t('local.artists_count', { count: artists.length })}</Tabs.Trigger>
+					<Tabs.Trigger value="albums">{t('local.albums_count', { count: albums.length })}</Tabs.Trigger>
 				</Tabs.List>
-				<TrackFilter bind:value={query} placeholder={t('common.search_your_music')} />
+				<TrackFilter bind:value={query} placeholder={t('common.search_local_library')} />
 			</div>
 			{#if q && !songs.length && !albums.length && !artists.length}
 				<p class="text-sm text-muted-foreground">{t('local.nothing_matches_device', { query: q })}</p>

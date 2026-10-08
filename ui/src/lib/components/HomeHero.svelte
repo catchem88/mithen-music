@@ -3,7 +3,7 @@
 	import { HugeiconsIcon } from '@hugeicons/svelte';
 	import { HistoryIcon, Search01Icon } from '@hugeicons/core-free-icons';
 	import SearchSuggest from '$lib/components/SearchSuggest.svelte';
-	import { auth, personal, playback } from '$lib/player.svelte';
+	import { auth, personal, playback, prefs } from '$lib/player.svelte';
 	import { thumb } from '$lib/thumb';
 	import { t, type TranslationKey } from '$lib/i18n.svelte';
 
@@ -96,16 +96,17 @@
 			</h1>
 		</div>
 		<div class="flex shrink-0 items-center gap-2">
-			<!-- Listen Together moved out of here and lives on the titlebar alone: history is the thing
-			     you reach for from the home page. -->
-			<button
-				onclick={() => goto('/history')}
-				title={t('nav.history')}
-				aria-label={t('nav.history')}
-				class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-			>
-				<HugeiconsIcon icon={HistoryIcon} class="h-5 w-5" />
-			</button>
+			<!-- History is the thing you reach for from the home page; hidden while History is off. -->
+			{#if prefs.history}
+				<button
+					onclick={() => goto('/history')}
+					title={t('nav.history')}
+					aria-label={t('nav.history')}
+					class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<HugeiconsIcon icon={HistoryIcon} class="h-5 w-5" />
+				</button>
+			{/if}
 			<form class="relative w-full max-w-xs" onsubmit={(e) => { e.preventDefault(); goSearch(); }}>
 				<HugeiconsIcon
 					icon={Search01Icon}

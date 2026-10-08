@@ -53,6 +53,27 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
+/// Show the main window if it is hidden or minimized; hide it (to the tray when "Close to system
+/// tray" is on) if it is the foreground window. Bound to the "Show / Hide Application" hotkey.
+pub fn toggle_main(app: &AppHandle) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    let showing = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
+    if showing && w.is_focused().unwrap_or(false) {
+        let close_hides = app
+            .try_state::<Arc<AppState>>()
+            .map(|s| s.db.get_setting("close_to_tray").map(|v| v != "false").unwrap_or(true))
+            .unwrap_or(false);
+        if close_hides && available() {
+            let _ = w.hide();
+            set_main_visible(app, false);
+        } else {
+            let _ = w.minimize();
+        }
+    } else {
+        show_main(app);
+    }
+}
+
 /// Tell the main window's SPA whether anyone can see it.
 ///
 /// WebKitGTK does not pass a GTK hide down to the page: `document.visibilityState` stays
@@ -120,21 +141,21 @@ mod imp {
 
     /// `Handle` isn't `Clone`, so it lives here rather than in Tauri's managed state — that also
     /// keeps [`set_playing`] callable without borrowing across an await.
-    static HANDLE: OnceLock<Handle<LimusicTray>> = OnceLock::new();
+    static HANDLE: OnceLock<Handle<MithenMusicTray>> = OnceLock::new();
 
-    struct LimusicTray {
+    struct MithenMusicTray {
         app: AppHandle,
         playing: bool,
         icon: Vec<Icon>,
     }
 
-    impl Tray for LimusicTray {
+    impl Tray for MithenMusicTray {
         fn id(&self) -> String {
             "limusic".into()
         }
 
         fn title(&self) -> String {
-            "Limusic".into()
+            "MithenMusic".into()
         }
 
         fn icon_pixmap(&self) -> Vec<Icon> {
@@ -170,7 +191,7 @@ mod imp {
                 })
             };
             vec![
-                item("Show Limusic", "show"),
+                item("Show MithenMusic", "show"),
                 MenuItem::Separator,
                 item(if self.playing { "Pause" } else { "Play" }, "play_pause"),
                 item("Next", "next"),
@@ -193,7 +214,7 @@ mod imp {
 
     pub fn init(app: &AppHandle) -> tauri::Result<()> {
         let icon = crate::appicon::current(app).map(|i| icon_pixmap(&i)).unwrap_or_default();
-        let tray = LimusicTray { app: app.clone(), playing: false, icon };
+        let tray = MithenMusicTray { app: app.clone(), playing: false, icon };
         // Registering with the StatusNotifierWatcher is async and can outlive setup(); a failure
         // here costs the tray, not the app, so it's logged rather than propagated.
         //
@@ -244,7 +265,7 @@ mod imp {
     }
 
     pub fn init(app: &AppHandle) -> tauri::Result<()> {
-        let show = MenuItem::with_id(app, "show", "Show Limusic", true, None::<&str>)?;
+        let show = MenuItem::with_id(app, "show", "Show MithenMusic", true, None::<&str>)?;
         let play_pause = MenuItem::with_id(app, "play_pause", "Play", true, None::<&str>)?;
         let next = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
         let prev = MenuItem::with_id(app, "prev", "Previous", true, None::<&str>)?;
@@ -269,7 +290,7 @@ mod imp {
         let mut builder = TrayIconBuilder::with_id("main")
             .menu(&menu)
             .show_menu_on_left_click(false)
-            .tooltip("Limusic")
+            .tooltip("MithenMusic")
             .on_menu_event(|app, event| handle_menu(app, event.id.as_ref()))
             .on_tray_icon_event(|tray, event| {
                 if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } = event {

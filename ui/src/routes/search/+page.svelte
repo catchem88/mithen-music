@@ -14,7 +14,6 @@
 	import { HugeiconsIcon } from '@hugeicons/svelte';
 	import {
 		Cancel01Icon,
-		Clock01Icon,
 		GuitarIcon,
 		MusicNote01Icon,
 		Search01Icon,
@@ -41,11 +40,7 @@
 	import { getCached, putCached } from '$lib/pagecache';
 	import {
 		auth,
-		clearSearches,
-		forgetSearch,
-		noteSearch,
 		openAddToPlaylist,
-		personal,
 		playSong,
 		playback
 	} from '$lib/player.svelte';
@@ -79,7 +74,6 @@
 		const q = query;
 		latest = q;
 		lastQuery = q;
-		noteSearch(q);
 		const key = `search:${q}`;
 		const hit = getCached<Cached>(key);
 		if (hit) {
@@ -116,11 +110,6 @@
 		} finally {
 			if (latest === q) searching = false;
 		}
-	}
-
-	function searchFor(q: string) {
-		query = q;
-		runSearch();
 	}
 
 	/** Back to the browse page. `latest` is reset too, so a search still in flight lands nowhere. */
@@ -231,7 +220,7 @@
 	// Tile covers. localStorage rather than SQLite, like `personal`: only the webview reads them.
 	// A category's first playlist changes over weeks, so a stale cover still shows while its
 	// replacement is fetched, and a fresh one is never asked for twice.
-	const ART_KEY = 'limusic:mood-art';
+	const ART_KEY = 'mithenmusic:mood-art';
 	const ART_TTL_MS = 7 * 24 * 3600_000;
 	type ArtStore = Record<string, { url: string; at: number }>;
 	let art = $state<Record<string, string>>({});
@@ -416,7 +405,6 @@
 				inputClass="h-12 rounded-full bg-card/80 pl-12 text-base shadow-sm md:text-base"
 				onpick={() => {
 					lastQuery = query;
-					noteSearch(query);
 				}}
 			/>
 			{#if query}
@@ -561,41 +549,6 @@
 			{/if}
 		{:else}
 			<div class="content-in flex flex-col gap-10">
-				{#if personal.searches.length}
-					<section>
-						<SectionHeading title={t('search.recent')} icon={Clock01Icon}>
-							<button
-								class="shrink-0 cursor-pointer text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-								onclick={clearSearches}
-							>
-								{t('search.clear_recent')}
-							</button>
-						</SectionHeading>
-						<div class="flex flex-wrap gap-2">
-							{#each personal.searches as q (q)}
-								<div
-									class="flex items-center rounded-full bg-foreground/5 text-sm transition-colors hover:bg-foreground/10"
-								>
-									<button
-										class="flex cursor-pointer items-center gap-2 py-1.5 pl-3.5 pr-1.5 font-medium text-foreground/80 hover:text-foreground"
-										onclick={() => searchFor(q)}
-									>
-										<HugeiconsIcon icon={Search01Icon} class="h-3.5 w-3.5 text-muted-foreground" />
-										{q}
-									</button>
-									<button
-										class="mr-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
-										aria-label={t('search.forget', { query: q })}
-										title={t('search.forget', { query: q })}
-										onclick={() => forgetSearch(q)}
-									>
-										<HugeiconsIcon icon={Cancel01Icon} class="h-3 w-3" />
-									</button>
-								</div>
-							{/each}
-						</div>
-					</section>
-				{/if}
 				{#if moods === null}
 					<section aria-hidden="true">
 						<Skeleton class="mb-4 h-6 w-44 rounded" />
@@ -630,7 +583,7 @@
 							</div>
 						</section>
 					{/each}
-					{#if !moods.length && !personal.searches.length}
+					{#if !moods.length}
 						<p class="text-sm text-muted-foreground">{t('common.search_prompt')}</p>
 					{/if}
 				{/if}

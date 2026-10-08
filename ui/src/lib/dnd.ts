@@ -3,13 +3,13 @@
 // spec forbids reading the data itself — only the type list is visible until the drop lands.
 import type { BrowseItem } from './api';
 
-export const ITEM_MIME = 'application/x-limusic-item';
+export const ITEM_MIME = 'application/x-mithenmusic-item';
 /** A queue row being dragged to a new position (`QueueList`), carrying its queue index. */
-export const QUEUE_ROW_MIME = 'application/x-limusic-queue-row';
+export const QUEUE_ROW_MIME = 'application/x-mithenmusic-queue-row';
 /** A home section being reordered in the Edit home panel (`HomeLayoutDialog`). */
-export const SECTION_ROW_MIME = 'application/x-limusic-section-row';
+export const SECTION_ROW_MIME = 'application/x-mithenmusic-section-row';
 /** A lyrics provider being reordered in Settings (`LyricsSourcesSettings`). */
-export const LYRICS_SOURCE_MIME = 'application/x-limusic-lyrics-source';
+export const LYRICS_SOURCE_MIME = 'application/x-mithenmusic-lyrics-source';
 
 export function setDragItem(e: DragEvent, item: BrowseItem): void {
 	e.dataTransfer?.setData(ITEM_MIME, JSON.stringify(item));
@@ -126,9 +126,9 @@ export function dragScroll(el: HTMLElement, mime: string = ITEM_MIME) {
  * Swallow a drag that isn't ours. The window is built with `dragDropEnabled: false` (Tauri's own
  * handler blocks HTML5 drag and drop on Windows, which is what the queue reorder and the Shortcuts
  * grid are built on), and with nothing catching them a file or a link dropped on the window
- * navigates the webview to it and blanks the app. Ours carry an `x-limusic` type and pass through
+ * navigates the webview to it and blanks the app. Ours carry an `x-mithenmusic` type and pass through
  * untouched, so the "no drop" cursor still shows where a card can't land.
  */
 export function blockForeignDrag(e: DragEvent): void {
-	if (!e.dataTransfer?.types.some((t) => t.startsWith('application/x-limusic'))) e.preventDefault();
+	if (!e.dataTransfer?.types.some((t) => t.startsWith('application/x-mithenmusic'))) e.preventDefault();
 }

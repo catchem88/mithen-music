@@ -10,8 +10,8 @@ import { enqueue, openAddManyToPlaylist, playFrom, playSong, toast, touchPick } 
 /**
  * A song card carries everything a queue entry needs; the ⋯ menus take this shape. The one mapping
  * for every card surface (search rows, home shelves, carousels): a card's `subtitle` is already the
- * artist alone for songs, and that string is what the player bar shows and what gets scrobbled, so
- * a second copy of this that drifts is a wrong scrobble.
+ * artist alone for songs, and that string is what the player bar shows, so a second copy of this
+ * that drifts is a wrong credit.
  */
 export const asSong = (i: BrowseItem): SongItem => ({
 	video_id: i.id,

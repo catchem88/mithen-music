@@ -185,7 +185,7 @@ pub async fn toggle_pause(state: St<'_>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn seek(state: St<'_>, position: f64) -> Result<(), String> {
-    // Routed through AppState so a Listen Together host broadcasts the seek and a guest is blocked.
+    // Routed through AppState, so the UI and the media keys share one seek path.
     state.user_seek(position).await
 }
 
@@ -222,15 +222,13 @@ pub async fn get_queue(state: St<'_>) -> Result<serde_json::Value, String> {
 /// `visitor_data`) and internal blobs (`queue_json`, `queue_index`, `queue_position`) never cross
 /// into the webview: they'd otherwise ship the login credential to the renderer on every open, and
 /// the webview can't overwrite them either.
-const UI_SETTINGS: [&str; 29] = [
+const UI_SETTINGS: [&str; 24] = [
     "volume",
     "proxy",
     "quality",
     "normalize_volume",
     "enable_history",
     "disabled_stream_clients",
-    "discord_rpc",
-    "discord_rpc_config",
     "close_to_tray",
     "track_notifications",
     "autostart",
@@ -246,9 +244,6 @@ const UI_SETTINGS: [&str; 29] = [
     "sticky_shuffle",
     "shuffle_whole_queue",
     "system_titlebar",
-    "lastfm_primary_artist",
-    "lastfm_primary_strict",
-    "lastfm_config",
     "crossfade",
     "crossfade_secs",
     "locale",
@@ -408,21 +403,6 @@ pub async fn set_setting(
     #[cfg(target_os = "linux")]
     if key == "ambient_light" {
         crate::set_webgl(&app, value == "true");
-    }
-    // Presence connects/clears the moment it's toggled — the user shouldn't have to skip a track
-    // to see it take effect.
-    if key == "discord_rpc" {
-        state.set_discord_enabled(value == "true");
-    }
-    // Same reasoning for the card layout: the settings tab previews it live, so the real card has
-    // to follow without waiting for the next track.
-    if key == "discord_rpc_config" {
-        state.set_discord_config(&value);
-    }
-    // The Scrobbling tab's settings, read whole each time: the two switches from #231 keep rows of
-    // their own, and the scrobbler wants all of it in one message.
-    if matches!(key.as_str(), "lastfm_config" | "lastfm_primary_artist" | "lastfm_primary_strict") {
-        state.lastfm.set_config(crate::lastfm::ScrobbleConfig::load(&state.db));
     }
     // Retune the track that's playing. Unlike crossfade below, this one has to apply to what the
     // user is hearing right now: the switch exists so they can A/B the same loud section (#298).
@@ -725,7 +705,7 @@ pub async fn open_mini(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Swap back. Same path as the tray, so the widget and the tray can't disagree about what
-/// "show Limusic" means.
+/// "show MithenMusic" means.
 #[tauri::command]
 pub async fn close_mini(app: tauri::AppHandle) -> Result<(), String> {
     crate::tray::show_main(&app);
@@ -945,11 +925,10 @@ fn on_repeat_songs(state: &Arc<AppState>) -> Vec<SongItem> {
 }
 
 /// A play record is the whole `SongItem` as it sat in the queue, so it carries that slot's queue
-/// metadata: `queued`/`queued_by` when the track was "added to queue" (in a Listen Together session,
-/// stamped with who added it), `autoplay` when radio appended it, `set_video_id` from whatever
-/// playlist it was played from. None of that describes the song, so On Repeat sheds it: otherwise
-/// the row wears a session member's name forever, and playing On Repeat drops it into "Next in
-/// queue" instead of the playlist. Strips on read so rows already stored this way are fixed too.
+/// metadata: `queued` when the track was "added to queue", `autoplay` when radio appended it,
+/// `set_video_id` from whatever playlist it was played from. None of that describes the song, so
+/// On Repeat sheds it: otherwise playing On Repeat drops it into "Next in queue" instead of the
+/// playlist. Strips on read so rows already stored this way are fixed too.
 fn shed_queue_context(s: SongItem) -> SongItem {
     SongItem {
         queued: false,
@@ -1856,6 +1835,24 @@ pub async fn get_local_library(state: St<'_>) -> Result<crate::local::LocalLibra
     scan_local(&state).await
 }
 
+/// Open an audio file handed to us by the OS (double-click, "Open with") and return it as a song
+/// the UI then plays. The file also joins the local library, so it has a cover and metadata.
+#[tauri::command]
+pub async fn open_local_file(
+    app: tauri::AppHandle,
+    state: St<'_>,
+    path: String,
+) -> Result<SongItem, String> {
+    let db = state.db.clone();
+    let covers = crate::local::covers_dir(&app);
+    let song =
+        tauri::async_runtime::spawn_blocking(move || crate::local::open_file(&db, &path, &covers))
+            .await
+            .map_err(|e| e.to_string())??;
+    crate::local::allow_covers(&app, std::slice::from_ref(&song));
+    Ok(song)
+}
+
 #[tauri::command]
 pub async fn add_local_folder(
     state: St<'_>,
@@ -1887,96 +1884,6 @@ async fn scan_local(state: &Arc<AppState>) -> Result<crate::local::LocalLibrary,
     // Artwork reaches the page over the asset protocol, which starts out allowing nothing.
     crate::local::allow_covers(&app, &lib.songs);
     Ok(lib)
-}
-
-// --- Listen Together (context/19) ----------------------------------------------------------
-
-/// Current client-side LT state (status, role, room, participants, pending joins, suggestions).
-#[tauri::command]
-pub async fn lt_get_state(state: St<'_>) -> Result<serde_json::Value, String> {
-    Ok(state.lt.snapshot().await)
-}
-
-/// Set + persist the sync server URL (e.g. the Tailscale Funnel `wss://…` address).
-#[tauri::command]
-pub async fn lt_set_server_url(state: St<'_>, url: String) -> Result<(), String> {
-    let url = url.trim().to_string();
-    state.db.set_setting("lt_server_url", &url);
-    state.lt.set_server_url(url).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_create_room(state: St<'_>, username: String) -> Result<(), String> {
-    state.lt.create_room(username).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_join_room(state: St<'_>, code: String, username: String) -> Result<(), String> {
-    state.lt.join_room(code, username).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_leave(state: St<'_>) -> Result<(), String> {
-    state.lt.leave().await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_approve_join(state: St<'_>, user_id: String) -> Result<(), String> {
-    state.lt.approve_join(user_id).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_reject_join(state: St<'_>, user_id: String) -> Result<(), String> {
-    state.lt.reject_join(user_id).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_kick(state: St<'_>, user_id: String) -> Result<(), String> {
-    state.lt.kick(user_id).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_transfer_host(state: St<'_>, user_id: String) -> Result<(), String> {
-    state.lt.transfer_host(user_id).await;
-    Ok(())
-}
-
-/// Guest: send a track to the session queue (auto-approved by the host client, which stamps
-/// who added it).
-#[tauri::command]
-pub async fn lt_suggest(state: St<'_>, item: SongItem) -> Result<(), String> {
-    state.lt.suggest(crate::state::song_to_track(&item)).await;
-    Ok(())
-}
-
-/// Host: approve a suggestion — add it to the real queue and notify the suggester. (Unused since
-/// guest adds auto-approve, kept for a future "require approval" setting.)
-#[tauri::command]
-pub async fn lt_approve_suggestion(state: St<'_>, id: String) -> Result<(), String> {
-    if let Some(track) = state.lt.approve_suggestion(id).await {
-        state.inner().clone().lt_enqueue_track(track).await;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn lt_reject_suggestion(state: St<'_>, id: String) -> Result<(), String> {
-    state.lt.reject_suggestion(id).await;
-    Ok(())
-}
-
-/// Guest: force a re-sync with the room (drift correction).
-#[tauri::command]
-pub async fn lt_request_sync(state: St<'_>) -> Result<(), String> {
-    state.lt.request_sync().await;
-    Ok(())
 }
 
 // --- lyrics ---------------------------------------------------------------------------------
@@ -2025,138 +1932,6 @@ pub fn lyrics_providers(state: St<'_>) -> Vec<crate::lyrics::ProviderInfo> {
     crate::lyrics::providers(state.inner())
 }
 
-// --- Changelog ------------------------------------------------------------------------------
-
-#[derive(Clone, serde::Serialize)]
-pub struct ReleaseNote {
-    version: String,
-    /// `YYYY-MM-DD`, or empty for an unpublished tag.
-    date: String,
-    /// The release description, verbatim markdown. The About tab renders it.
-    body: String,
-}
-
-/// What's new, read straight from the GitHub releases API so the release description is the only
-/// place the changelog is written. Cached for the process: the list only changes when a release
-/// is cut, and unauthenticated GitHub allows 60 requests an hour.
-#[tauri::command]
-pub async fn release_notes() -> Result<Vec<ReleaseNote>, String> {
-    static CACHE: std::sync::OnceLock<Vec<ReleaseNote>> = std::sync::OnceLock::new();
-    if let Some(cached) = CACHE.get() {
-        return Ok(cached.clone());
-    }
-    #[derive(serde::Deserialize)]
-    struct GhRelease {
-        tag_name: String,
-        published_at: Option<String>,
-        body: Option<String>,
-        draft: bool,
-        prerelease: bool,
-    }
-    let releases: Vec<GhRelease> = crate::http::client()
-        .get("https://api.github.com/repos/SimoHypers/limusic/releases?per_page=20")
-        .header("User-Agent", concat!("Limusic/", env!("CARGO_PKG_VERSION")))
-        .header("Accept", "application/vnd.github+json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-    let notes: Vec<ReleaseNote> = releases
-        .into_iter()
-        .filter(|r| !r.draft && !r.prerelease)
-        .map(|r| ReleaseNote {
-            version: r.tag_name.trim_start_matches('v').to_string(),
-            date: r
-                .published_at
-                .and_then(|d| d.split('T').next().map(str::to_string))
-                .unwrap_or_default(),
-            body: r.body.unwrap_or_default(),
-        })
-        .collect();
-    Ok(CACHE.get_or_init(|| notes).clone())
-}
-
-/// Whether this build can install an update itself, or only point the user at the download.
-///
-/// Tauri's Linux updater knows one trick: rewrite an AppImage in place. It takes the path from
-/// `Env::appimage` and, when that is unset, falls back to `current_exe()` and writes the downloaded
-/// AppImage bytes over whatever it finds there. On the `.rpm` and on distro packages (the AUR's
-/// `limusic-bin`) that is a package-manager-owned `/usr/bin/limusic-app`: it fails on permissions
-/// rather than doing damage, but offering the button at all is a lie. Those users update through
-/// their package manager, so the UI shows them a download link instead.
-///
-/// Reads the same `Env::appimage` the updater plugin decides on, so the two cannot disagree.
-#[tauri::command]
-pub fn can_self_update(app: tauri::AppHandle) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        use tauri::Manager;
-        app.env().appimage.is_some()
-    }
-    // Windows runs the NSIS installer and macOS swaps the .app bundle; both work however the app
-    // was installed.
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = app;
-        true
-    }
-}
-
-/// The beta channel's manifest. `beta` is a permanent prerelease holding nothing but this file, and
-/// the release workflows move it to the newest release candidate, or to the newest release once that
-/// is ahead, so the URL never changes.
-const BETA_MANIFEST: &str =
-    "https://github.com/SimoHypers/limusic/releases/download/beta/latest.json";
-
-/// What the updater plugin's own `check` command returns, so the UI can wrap it in the plugin's
-/// `Update` class and install it the usual way.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BetaUpdate {
-    rid: tauri::ResourceId,
-    current_version: String,
-    version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    body: Option<String>,
-    raw_json: serde_json::Value,
-}
-
-/// The updater plugin's `check()`, pointed at the beta manifest. The plugin takes its endpoint from
-/// tauri.conf.json and its JS `check` has no way to pass another, so this mirrors its `check`
-/// command (tauri-plugin-updater 2.10.1, `commands.rs`) with the endpoint swapped. The `Update` goes
-/// into the same resource table, which is what lets the plugin's `downloadAndInstall` find it.
-///
-/// Any different version counts, same as `allowDowngrades` on stable: the pointer only moves forward
-/// by itself, so a lower version there is a beta rollback somebody made on purpose.
-#[tauri::command]
-pub async fn check_beta_update(webview: tauri::Webview) -> Result<Option<BetaUpdate>, String> {
-    use tauri::Manager;
-    use tauri_plugin_updater::UpdaterExt;
-    let url = tauri::Url::parse(BETA_MANIFEST).map_err(|e| e.to_string())?;
-    let update = webview
-        .updater_builder()
-        .endpoints(vec![url])
-        .map_err(|e| e.to_string())?
-        .version_comparator(|current, remote| remote.version != current)
-        .build()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(update.map(|u| BetaUpdate {
-        current_version: u.current_version.clone(),
-        version: u.version.clone(),
-        body: u.body.clone(),
-        raw_json: u.raw_json.clone(),
-        rid: webview.resources_table().add(u),
-    }))
-}
-
 /// Open a link from the UI in the real browser. An `<a href>` inside the webview would navigate
 /// the app itself off the SPA, with no way back.
 #[tauri::command]
@@ -2164,7 +1939,25 @@ pub async fn open_external(url: String) -> Result<(), String> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err("only http(s) links".into());
     }
-    crate::lastfm::open_browser(&url)
+    open_in_browser(&url)
+}
+
+/// Hand `url` to the OS browser without going through a shell: `rundll32`'s
+/// `FileProtocolHandler` is the documented, injection-free way to launch a URL on Windows.
+fn open_in_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = url;
+        Err("opening external links is only supported on Windows".into())
+    }
 }
 
 // --- Diagnostics ----------------------------------------------------------------------------
@@ -2202,44 +1995,6 @@ pub fn log_ui(level: String, message: String) {
         "warn" => tracing::warn!(target: "ui", "{message}"),
         _ => tracing::error!(target: "ui", "{message}"),
     }
-}
-
-// --- Last.fm scrobbling ---------------------------------------------------------------------
-
-/// Start the browser auth flow. Returns once the authorize page is open; the outcome (session
-/// stored, or an error) arrives via the `lastfm-state` event.
-#[tauri::command]
-pub async fn lastfm_connect(state: St<'_>) -> Result<(), String> {
-    crate::lastfm::connect(state.inner().clone()).await
-}
-
-#[tauri::command]
-pub async fn lastfm_disconnect(state: St<'_>) -> Result<(), String> {
-    crate::lastfm::disconnect(&state);
-    Ok(())
-}
-
-/// `{ connected, username }` from the persisted session — seeds the titlebar button on mount.
-#[tauri::command]
-pub async fn lastfm_status(state: St<'_>) -> Result<serde_json::Value, String> {
-    Ok(crate::lastfm::status(&state))
-}
-
-/// Avatar and counts for the Scrobbling tab's account card. One Last.fm call per tab open.
-#[tauri::command]
-pub async fn lastfm_profile(state: St<'_>) -> Result<Option<crate::lastfm::Profile>, String> {
-    Ok(crate::lastfm::profile(&state).await)
-}
-
-/// What `track` would scrobble as under `config` (the Scrobbling tab's unsaved state, as JSON).
-/// The tab's preview, computed by the same function the scrobbler sends from, so a pattern the
-/// Rust regex engine reads differently from JavaScript's can't make the preview lie.
-#[tauri::command]
-pub async fn lastfm_preview(
-    config: String,
-    track: crate::lastfm::Track,
-) -> crate::lastfm::Resolved {
-    crate::lastfm::resolve(&track, &crate::lastfm::ScrobbleConfig::parse(&config))
 }
 
 /// Theater mode's fullscreen toggle (#139).

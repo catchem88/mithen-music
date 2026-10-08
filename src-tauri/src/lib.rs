@@ -1,4 +1,4 @@
-//! Limusic Tauri app. Wires transport + player + db + orchestrator behind the command boundary.
+//! MithenMusic Tauri app. Wires transport + player + db + orchestrator behind the command boundary.
 
 mod appicon;
 mod audioproxy;
@@ -7,20 +7,13 @@ mod cipher;
 mod commands;
 mod db;
 mod diagnostics;
-mod discord;
 mod hotkeys;
 mod http;
 mod import;
-#[cfg(target_os = "linux")]
-mod inhibit;
-mod lastfm;
-mod listentogether;
 mod local;
 mod lyrics;
 mod media;
 mod mini;
-#[cfg(target_os = "linux")]
-mod nativevideo;
 #[cfg(windows)]
 #[path = "nativevideo_windows.rs"]
 mod nativevideo;
@@ -164,8 +157,8 @@ pub(crate) fn tune_webview_labelled(app: &tauri::AppHandle, label: &str, media: 
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// Logs to stdout **and** to `<app data>/limusic.log`, truncated each launch (the previous run is
-/// kept as `limusic.log.1`).
+/// Logs to stdout **and** to `<app data>/mithenmusic.log`, truncated each launch (the previous run is
+/// kept as `mithenmusic.log.1`).
 ///
 /// The filter names `app_lib`, the `[lib]` name, because that is what every tracing target in this
 /// crate carries (`app_lib::orchestrator`). It said `limusic_app` until 2026-08-29, which only ever
@@ -184,8 +177,8 @@ fn init_logging(dir: &std::path::Path) {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "info,app_lib=debug".into())
     };
-    let path = dir.join("limusic.log");
-    let _ = std::fs::rename(&path, dir.join("limusic.log.1"));
+    let path = dir.join("mithenmusic.log");
+    let _ = std::fs::rename(&path, dir.join("mithenmusic.log.1"));
     // ponytail: one file per launch, no size cap. A run long enough to matter is a run whose log
     // someone wants anyway; add rotation if that stops being true.
     let file = std::fs::File::create(&path).ok().map(std::sync::Mutex::new);
@@ -235,7 +228,7 @@ fn raise_fd_limit() {
 /// `main.rs` sets `windows_subsystem = "windows"` in release, so a panic here writes to a stderr
 /// that is not connected to anything: the user sees a process start and disappear, with no window,
 /// no console and no log line. `init_logging` has already run by the time any caller gets here, so
-/// this reaches limusic.log (the writer is unbuffered, so the line lands before the exit).
+/// this reaches mithenmusic.log (the writer is unbuffered, so the line lands before the exit).
 ///
 /// There is deliberately no dialog, although the dialog plugin is registered. `setup` runs on the
 /// main thread inside the event loop's `Ready` handler, and the plugin shows a message box by
@@ -246,6 +239,32 @@ fn raise_fd_limit() {
 fn fatal(what: &str, detail: &str) -> ! {
     tracing::error!("fatal at startup: {what}: {detail}");
     std::process::exit(1)
+}
+
+/// The UI language the Windows installer recorded under
+/// `HKLM\Software\MithenApps\MithenMusic\Locale`, or `None` when absent (dev builds, other
+/// platforms). Read once at startup so the app opens in the language picked at install.
+#[cfg(target_os = "windows")]
+fn installer_locale() -> Option<String> {
+    let out = std::process::Command::new("reg")
+        .args(["query", r"HKLM\Software\MithenApps\MithenMusic", "/v", "Locale"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // A value line reads `    Locale    REG_SZ    en`.
+    text.lines()
+        .find(|l| l.contains("REG_SZ"))
+        .and_then(|l| l.split_whitespace().last())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn installer_locale() -> Option<String> {
+    None
 }
 
 /// Whether the OS launched us at login, through the autostart entry's `--autostart`.
@@ -374,8 +393,6 @@ pub fn run() {
                 .body(webview::HARNESS_HTML.as_bytes())
                 .expect("static harness response")
         })
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         // Folder picker for the local-music library (local.rs).
         .plugin(tauri_plugin_dialog::init())
         // Copying goes through Rust, not the webview. WebKitGTK gates JavaScript clipboard writes
@@ -422,10 +439,10 @@ pub fn run() {
 
             // Shared: the PoToken generator persists its session token through the same file,
             // and it is built before AppState takes ownership of everything else.
-            let (db, quarantined) = match Db::open_or_quarantine(&data_dir.join("limusic.sqlite")) {
+            let (db, quarantined) = match Db::open_or_quarantine(&data_dir.join("mithenmusic.sqlite")) {
                 Ok(v) => v,
                 Err(e) => fatal(
-                    "Limusic could not open or create its database",
+                    "MithenMusic could not open or create its database",
                     &format!("{}: {e}", data_dir.display()),
                 ),
             };
@@ -477,12 +494,19 @@ pub fn run() {
             let session = Session { locale: Locale::default(), visitor_data, data_sync_id, cookie };
             let it = match InnerTube::new(session, proxy.as_deref()) {
                 Ok(it) => it,
-                Err(e) => fatal("Limusic could not start its network client", &e.to_string()),
+                Err(e) => fatal("MithenMusic could not start its network client", &e.to_string()),
             };
             // Shelf titles, mood chips and playlist subtitles are YouTube's text, so the UI's
             // language has to go out with the request (#274). Persisted rather than pushed from the
             // SPA at startup, because the first home fetch is already in flight by the time the
             // webview could tell us; the SPA writes it whenever it changes (`set_setting`).
+            // A fresh install's language comes from the installer (the in-app picker is gone). Seed
+            // it once, before the SPA could write its own auto-detected value.
+            if db.get_setting("locale").is_none() {
+                if let Some(loc) = installer_locale() {
+                    db.set_setting("locale", &loc);
+                }
+            }
             if let Some(hl) = db.get_setting("locale") {
                 it.set_locale(&hl);
             }
@@ -497,7 +521,7 @@ pub fn run() {
             let mut player = match Player::new(&cache_dir.to_string_lossy()) {
                 Ok(p) => p,
                 Err(e) => fatal(
-                    "Limusic could not load libmpv, which it uses to play audio",
+                    "MithenMusic could not load libmpv, which it uses to play audio",
                     &format!(
                         "{e}. On Linux, install your distribution's mpv library \
                          (Fedora: mpv-libs, Debian/Ubuntu: libmpv2)."
@@ -520,7 +544,7 @@ pub fn run() {
             let events = match player.take_events() {
                 Some(ev) => ev,
                 None => fatal(
-                    "Limusic could not start its audio event loop",
+                    "MithenMusic could not start its audio event loop",
                     "the player's event channel was already taken, which is a bug",
                 ),
             };
@@ -548,25 +572,6 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             taskbar::init(&handle);
 
-            // Discord rich presence — off unless the user opted in; parks on its channel until then.
-            let discord = discord::spawn(
-                db.get_setting("discord_rpc").as_deref() == Some("true"),
-                discord::RpcConfig::parse(db.get_setting("discord_rpc_config").as_deref()),
-            );
-
-            // Last.fm scrobbler — parks until a session key exists (titlebar connect flow).
-            let lastfm = lastfm::spawn(
-                db.get_setting("lastfm_session_key").filter(|s| !s.is_empty()),
-                lastfm::ScrobbleConfig::load(&db),
-            );
-
-            // Listen Together session (context/19). Server URL is a DB setting so "home PC → VPS" is
-            // config, not a rebuild. The sync channel feeds the guest-playback bridge below.
-            // Empty means the built-in default, which `LtSession` resolves when it connects. The
-            // URL does not live here so that nothing ever has to hand it to the UI.
-            let lt_url = db.get_setting("lt_server_url").unwrap_or_default();
-            let (lt, lt_sync_rx) = listentogether::LtSession::new(handle.clone(), lt_url);
-
             let app_state = Arc::new(AppState::new(
                 it,
                 clients,
@@ -574,11 +579,8 @@ pub fn run() {
                 db.clone(),
                 handle.clone(),
                 orchestrator,
-                lt,
                 cache_dir.clone(),
                 media,
-                discord,
-                lastfm,
             ));
             app.manage(app_state.clone());
 
@@ -633,17 +635,6 @@ pub fn run() {
             // `apply` would take over ICON_BIG from the .exe's own icon for no reason.
             if appicon::custom_path(&handle).is_some() {
                 appicon::apply(&handle);
-            }
-
-            // Bridge: apply Listen Together sync commands (guest playback / host seed) to AppState.
-            {
-                let st = app_state.clone();
-                let mut rx = lt_sync_rx;
-                tauri::async_runtime::spawn(async move {
-                    while let Some(cmd) = rx.recv().await {
-                        st.apply_sync(cmd).await;
-                    }
-                });
             }
 
             // Restore the last session's queue (paused, not autoplaying). context/11 §state.
@@ -888,6 +879,7 @@ pub fn run() {
             commands::block_artist,
             commands::unblock_artist,
             commands::get_local_library,
+            commands::open_local_file,
             commands::add_local_folder,
             commands::remove_local_folder,
             commands::allow_font_file,
@@ -922,32 +914,11 @@ pub fn run() {
             commands::import_source,
             commands::import_update,
             commands::import_resolve,
-            commands::lt_get_state,
-            commands::lt_set_server_url,
-            commands::lt_create_room,
-            commands::lt_join_room,
-            commands::lt_leave,
-            commands::lt_approve_join,
-            commands::lt_reject_join,
-            commands::lt_kick,
-            commands::lt_transfer_host,
-            commands::lt_suggest,
-            commands::lt_approve_suggestion,
-            commands::lt_reject_suggestion,
-            commands::lt_request_sync,
             commands::get_lyrics,
             commands::choose_lyrics_source,
             commands::set_lyrics_offset,
             commands::lyrics_providers,
-            commands::lastfm_connect,
-            commands::lastfm_disconnect,
-            commands::lastfm_status,
-            commands::lastfm_preview,
-            commands::lastfm_profile,
             commands::theater_fullscreen,
-            commands::release_notes,
-            commands::can_self_update,
-            commands::check_beta_update,
             commands::open_external,
             commands::diagnostics,
             commands::diagnostics_summary,
@@ -1078,11 +1049,7 @@ fn spawn_event_pump(
                     // MPRIS uses, so tray state can't drift from media-key state.
                     tray::set_playing(&app, playing);
                 }
-                // Listen Together host: broadcast a pause/resume. Not from `Playing`, which also
-                // flips when a track runs out, and that arrives here after the next track was
-                // announced (`on_track_ended` loads it on this pump), with the old track's end as
-                // the position. Guests then seek the new track to it, past the end of a shorter one.
-                PlayerEvent::Paused(paused) => state.lt_on_play_state(!paused).await,
+                PlayerEvent::Paused(_) => {}
                 PlayerEvent::TrackEnded => {
                     state.on_track_ended().await;
                 }

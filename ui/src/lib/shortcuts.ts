@@ -41,11 +41,40 @@ export function initShortcuts(mini = false) {
 	const onKey = (e: KeyboardEvent) => {
 		// Focused controls (including track selection) have already handled this key.
 		if (e.defaultPrevented) return;
+		// Escape in a text field clears it and drops focus, instead of only blurring (or, inside a
+		// dialog, closing the whole thing).
+		if (
+			e.key === 'Escape' &&
+			(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+		) {
+			const el = e.target;
+			if (el.value) {
+				el.value = '';
+				el.dispatchEvent(new Event('input', { bubbles: true }));
+			}
+			el.blur();
+			e.preventDefault();
+			return;
+		}
 		// F5 reloads the page here for the same reason it does in a browser, and like a browser it
 		// works from inside a text field too. Ctrl+R is not a second way in: that key cycles repeat.
 		// The mini widget has no page to reload, so it keeps the key for the OS.
 		if (!mini && e.key === 'F5') {
 			refreshView();
+			e.preventDefault();
+			return;
+		}
+		// `.` focuses the current view's search box, but only while this window is the active,
+		// foreground one — a bare key must never fire from the background.
+		if (e.key === '.' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+			if (!document.hasFocus() || document.visibilityState !== 'visible') return;
+			if (typing(e.target)) return;
+			const input = [...document.querySelectorAll<HTMLInputElement>('[data-search-input]')]
+				.reverse()
+				.find((el) => el.offsetParent !== null);
+			if (!input) return;
+			input.focus();
+			input.select();
 			e.preventDefault();
 			return;
 		}

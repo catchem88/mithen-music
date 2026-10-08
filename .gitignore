@@ -7,6 +7,8 @@ rustypipe_reports/
 
 # Windows build artifacts — libmpv is fetched at build time (117 MB DLL), never committed.
 /src-tauri/libmpv-2.dll
+# Explorer thumbnail handler, built from crates/thumbnail-provider at build time.
+/src-tauri/mithenmusic-thumbnail.dll
 /.libmpv/
 /libmpv/
 
@@ -31,3 +33,14 @@ rustypipe_reports/
 /plans
 scripts/bench.sh
 scripts/triage.py
+
+# MithenMusic fork
+*.exe
+.vscode
+.code-workspace
+*.code-workspace
+.ai/
+.qm/
+.kilo/
+.commandcode/
+res/*

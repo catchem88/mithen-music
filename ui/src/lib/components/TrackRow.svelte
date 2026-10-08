@@ -12,7 +12,6 @@
 	import * as api from '$lib/api';
 	import type { SongItem } from '$lib/api';
 	import { thumb } from '$lib/thumb';
-	import { lt } from '$lib/lt.svelte';
 	import { anySaved, isLiked, openAddManyToPlaylist, ratingOf, savedPlaylists, toast, toggleRating } from '$lib/player.svelte';
 	import SavedInPlaylists from './SavedInPlaylists.svelte';
 	import TrackMenu from './TrackMenu.svelte';
@@ -89,9 +88,7 @@
 	} = $props();
 	const selectionDescriptionId = $props.id();
 
-	// In a session as guest, clicking a song adds it to the shared queue instead of playing it —
-	// reflect that in the hover icon + label so the row doesn't lie.
-	const guestAdd = $derived(lt.role === 'guest');
+	const guestAdd = false;
 	// Only in select mode: at rest the row is a plain click-to-play row, with no checkbox and no
 	// Space/click rebinding.
 	const selectable = $derived(!!selection?.active && selectionKey !== undefined);
@@ -304,13 +301,6 @@
 				<span class="min-w-0 truncate text-sm font-medium {active ? 'text-primary' : ''}">
 					{song.title}
 				</span>
-				{#if song.queued_by}
-					<span
-						class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-					>
-						{song.queued_by}
-					</span>
-				{/if}
 			</div>
 			<div class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
 				<ArtistLine runs={song.artist_runs} text={song.artists} />

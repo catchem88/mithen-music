@@ -27,14 +27,12 @@
 	import { rowScroller } from '$lib/rows.svelte';
 	import { dragScroll, QUEUE_ROW_MIME } from '$lib/dnd';
 	import { playback, prefs, setAutoplay, openAddToPlaylist } from '$lib/player.svelte';
-	import { lt } from '$lib/lt.svelte';
 	import { currentLocale, t } from '$lib/i18n.svelte';
 
 	const reducedMotion = new MediaQuery('(prefers-reduced-motion: reduce)');
 
-	// Guests are add-only in a session: no removing, reordering, clearing or autoplay of their own.
-	// The playing row can't be removed either (backend guards it too).
-	const canEdit = $derived(lt.role !== 'guest');
+	// The playing row can't be removed (backend guards it too).
+	const canEdit = true;
 
 	// --- drag to reorder ---------------------------------------------------------------------
 	// Upcoming rows only: the playing track and what came before it stay put (the backend clamps to

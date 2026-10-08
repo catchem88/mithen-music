@@ -1,0 +1,23 @@
+[package]
+name = "thumbnail-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows Explorer thumbnail handler (album art) for MithenMusic"
+
+[lib]
+name = "mithenmusic_thumbnail"
+crate-type = ["cdylib"]
+
+[dependencies]
+lofty = "0.22.2"
+# `#[implement]` expands to `windows_core::…` paths, so the core crate must be a direct dependency.
+windows-core = "0.61"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Imaging",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+] }

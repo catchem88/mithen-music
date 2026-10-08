@@ -1023,6 +1023,14 @@
 								{preparing || resorting ? t('common.sorting') : t('player.play')}
 							</Button>
 							<Button
+								class="gap-2"
+								onclick={shufflePlay}
+								disabled={!pl.items.length || preparing || resorting}
+							>
+								<HugeiconsIcon icon={ShuffleIcon} class="h-4 w-4" />
+								{t('player.shuffle_play')}
+							</Button>
+							<Button
 								variant="ghost"
 								size="icon"
 								aria-label={t('a11y.playlist_options')}
@@ -1190,13 +1198,6 @@
 		style={anchor.style}
 		{@attach fitMenu(anchor)}
 	>
-		<button
-			class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10"
-			onclick={() => run(shufflePlay)}
-			disabled={!pl?.items.length}
-		>
-			<HugeiconsIcon icon={ShuffleIcon} class="h-4 w-4" /> {t('player.shuffle_play')}
-		</button>
 		<button
 			class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10"
 			onclick={() => run(() => queue(true))}

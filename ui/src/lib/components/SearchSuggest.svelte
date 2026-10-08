@@ -148,6 +148,7 @@
 	<Input
 		bind:value
 		{placeholder}
+		data-search-input
 		class="pr-16 {inputClass}"
 		autocomplete="off"
 		role="combobox"

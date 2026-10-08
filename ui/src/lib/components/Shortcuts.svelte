@@ -33,15 +33,20 @@
 	import type { BrowseItem } from '$lib/api';
 	import { thumb } from '$lib/thumb';
 	import { openItem, playItem } from '$lib/browse';
-	import { library, personal, placePick, removePick } from '$lib/player.svelte';
+	import { library, personal, placePick, prefs, removePick } from '$lib/player.svelte';
 	import { freshen, MAX_PICKS } from '$lib/personal';
 	import { getDragItem, isDragItem, setDragItem } from '$lib/dnd';
 	import { t } from '$lib/i18n.svelte';
 	import ItemMenu from './ItemMenu.svelte';
 
 	// Tiles are stored as a snapshot of the card, so a playlist that has gained tracks since it was
-	// pinned would keep showing the old count; `freshen` overlays the live library row (#67).
-	const picks = $derived(personal.picks.map((p) => freshen(p, library.items)));
+	// pinned would keep showing the old count; `freshen` overlays the live library row (#67). The
+	// On Repeat tile is dropped while History is off.
+	const picks = $derived(
+		personal.picks
+			.map((p) => freshen(p, library.items))
+			.filter((p) => prefs.history || p.id !== ON_REPEAT_ID)
+	);
 	let picking = $state(false);
 	// Where a drop would land: the id of the tile it goes in front of, `null` for the end of the grid,
 	// `undefined` when no drag of ours is over the section at all.

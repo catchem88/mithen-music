@@ -160,6 +160,19 @@ pub fn scan(db: &Db, covers_dir: &Path) -> LocalLibrary {
     }
 }
 
+/// Read one audio file the OS handed us (a double-click or "Open with") into the library and return
+/// it as a playable song. Used by the `open_local_file` command.
+pub fn open_file(db: &Db, path: &str, covers_dir: &Path) -> Result<SongItem, String> {
+    let p = Path::new(path);
+    if !p.is_file() || !is_audio(p) {
+        return Err("not a supported audio file".into());
+    }
+    let track = read_track(p, path, mtime_of(p), covers_dir);
+    let song = to_song(&track);
+    db.put_local_tracks(&[track]);
+    Ok(song)
+}
+
 /// Recurse into `dir`, calling `on_file` for every audio file. Errors (permissions, a folder that
 /// was unplugged) are skipped rather than failing the scan.
 ///

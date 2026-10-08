@@ -1,9 +1,9 @@
 [package]
-name = "limusic-app"
+name = "mithenmusic-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Limusic — desktop YouTube Music client"
+description = "MithenMusic — desktop YouTube Music client"
 rust-version = "1.80"
 
 [lib]
@@ -22,8 +22,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tauri = { version = "2", features = ["tray-icon", "protocol-asset", "macos-private-api", "image-png"] }
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
@@ -46,15 +44,9 @@ http-body-util = "0.1"
 innertube = { path = "../crates/innertube" }
 player = { path = "../crates/player" }
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
-# Listen Together: shared wire types + WebSocket client (wss via rustls). context/19.
-listen-protocol = { workspace = true }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = { workspace = true }
 rand = { workspace = true }
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
-discord-rich-presence = "1.1.0"
-# Last.fm API signature (api_sig is md5 of the sorted params + secret), and the stable
-# saved-account key (db.rs::account_key).
+# The stable saved-account key (db.rs::account_key).
 md-5 = "0.10"
 lofty = "0.22.2"
 tauri-plugin-dialog = "2.7.2"
@@ -89,12 +81,4 @@ windows = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-# The music video's GL surface under the webview (nativevideo.rs). Same version tauri pulls in.
-gtk = "0.18"
-ksni = "0.3.6"
-libc = "0.2"
-# Reaching the WebKitGTK settings wry leaves at browser defaults. Must track wry's version.
-webkit2gtk = { version = "2.0", features = ["v2_40"] }
-# Holding off suspend while playing (inhibit.rs, #347). Already in the tree through notify-rust.
-zbus = "5"
+

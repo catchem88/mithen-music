@@ -20,14 +20,13 @@
 
 	type Where = 'account' | 'device';
 	// The last pick sticks until changed: someone who keeps their playlists on this machine
-	// shouldn't have to say so every time. Unset, it is the account, which is what "New playlist"
-	// always meant signed in.
+	// shouldn't have to say so every time. Unset, it is this device.
 	const WHERE_KEY = 'new_playlist_where';
 	function storedWhere(): Where {
 		try {
-			return localStorage.getItem(WHERE_KEY) === 'device' ? 'device' : 'account';
+			return localStorage.getItem(WHERE_KEY) === 'account' ? 'account' : 'device';
 		} catch {
-			return 'account';
+			return 'device';
 		}
 	}
 	let where = $state<Where>(storedWhere());
@@ -77,8 +76,8 @@
 	}
 
 	const options = [
-		{ value: 'account', icon: CloudIcon, label: 'account', desc: 'account_desc' },
-		{ value: 'device', icon: ComputerIcon, label: 'device', desc: 'device_desc' }
+		{ value: 'device', icon: ComputerIcon, label: 'device', desc: 'device_desc' },
+		{ value: 'account', icon: CloudIcon, label: 'account', desc: 'account_desc' }
 	] as const;
 </script>
 
