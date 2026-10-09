@@ -1,41 +1,21 @@
 <script lang="ts">
 	// Ctrl+H, ⌘/ on macOS: what the keyboard can do. Nothing in the chrome points at the shortcuts, so this is
-	// where they are discoverable. It documents the zoom keys too (zoom.svelte.ts owns those) — from the
-	// outside they are the same feature, and a list that only covers half of them is worse than none.
+	// where they are discoverable. The rows come from `apphotkeys.ts`, the same list Settings > Hotkeys
+	// shows read-only.
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { HELP_COMBO, MOD, MUTE_COMBO } from '$lib/shortcuts';
+	import { APP_HOTKEY_GROUPS } from '$lib/apphotkeys';
+	import { HELP_COMBO } from '$lib/shortcuts';
 	import { ui } from '$lib/player.svelte';
 	import { t } from '$lib/i18n.svelte';
 
-	// $derived, not a plain const: the list is rebuilt when the language changes under it.
-	const GROUPS: { title: string; rows: [string, string][] }[] = $derived([
-		{
-			title: t('dialogs.shortcuts.group_playback'),
-			rows: [
-				[t('dialogs.shortcuts.play_pause'), 'SPACE or ;'],
-				[t('dialogs.shortcuts.next_song'), `${MOD}F`],
-				[t('dialogs.shortcuts.previous_song'), `${MOD}D`],
-				[t('dialogs.shortcuts.shuffle_queue'), `${MOD}S`],
-				[t('dialogs.shortcuts.toggle_repeat'), `${MOD}R`],
-				[t('dialogs.shortcuts.mute_unmute'), MUTE_COMBO],
-				[t('dialogs.shortcuts.volume_up'), `${MOD}>`],
-				[t('dialogs.shortcuts.volume_down'), `${MOD}<`]
-			]
-		},
-		{
-			title: t('dialogs.shortcuts.group_general'),
-			rows: [
-				[t('dialogs.shortcuts.refresh_page'), 'F5'],
-				[t('dialogs.shortcuts.focus_search'), '.'],
-				[t('dialogs.shortcuts.search_anywhere'), `${MOD}K`],
-				[t('dialogs.shortcuts.toggle_now_playing'), `${MOD}E`],
-				[t('dialogs.shortcuts.zoom_in'), `${MOD}+`],
-				[t('dialogs.shortcuts.zoom_out'), `${MOD}-`],
-				[t('dialogs.shortcuts.reset_zoom'), `${MOD}0`],
-				[t('dialogs.shortcuts.show_this_list'), HELP_COMBO]
-			]
-		}
-	]);
+	// The same list Settings > Hotkeys shows read-only; `apphotkeys.ts` is the one source.
+	// $derived, not a plain const: it is rebuilt when the language changes under it.
+	const GROUPS: { title: string; rows: [string, string][] }[] = $derived(
+		APP_HOTKEY_GROUPS.map((g) => ({
+			title: t(g.titleKey),
+			rows: g.rows.map((r) => [t(r.labelKey), r.keys] as [string, string])
+		}))
+	);
 </script>
 
 <Dialog.Root bind:open={ui.shortcutsOpen}>

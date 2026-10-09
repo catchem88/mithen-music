@@ -836,8 +836,11 @@
 							</div>
 						</section>
 					{:else if tab === 'about'}
-						<div
-							class="mb-7 rounded-xl border bg-gradient-to-br from-primary/8 to-transparent px-4 py-4"
+						<button
+							type="button"
+							class="mb-7 block w-full rounded-xl border bg-gradient-to-br from-primary/8 to-transparent px-4 py-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+							title={t('settings.about.open_project')}
+							onclick={() => api.openExternal('https://github.com/catchem88/mithen-music')}
 						>
 							<div class="flex items-center gap-2">
 								<span class="font-heading text-lg font-bold">MithenMusic</span>
@@ -852,7 +855,7 @@
 							<p class="mt-1.5 max-w-prose text-xs leading-relaxed text-muted-foreground">
 								{t('settings.about.description')}
 							</p>
-						</div>
+						</button>
 
 						<section class={GROUP}>
 							<h3 class={LABEL}>{t('settings.sections.report')}</h3>

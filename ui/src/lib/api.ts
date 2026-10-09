@@ -466,6 +466,32 @@ export const resetGlobalHotkeys = () => invoke<HotkeyRegisterResult>('reset_glob
 /** Open an http(s) link in the real browser, never in the webview itself. */
 export const openExternal = (url: string) => invoke<void>('open_external', { url });
 
+/** Reveal a local file in Explorer, with the file selected. */
+export const revealInFolder = (path: string) => invoke<void>('reveal_in_folder', { path });
+
+/**
+ * Mirrors `commands::TrackInfo` (the Information window, Ctrl+I). A stream and a local file carry
+ * different fields: `local` says which side is meaningful, so a stream has `audioQuality` and a file
+ * has `sampleRate`/`bitDepth`. Everything is nullable - neither source always knows.
+ */
+export interface TrackInfo {
+	local: boolean;
+	/** The file on disk (local only); a stream's page link is built from the videoId. */
+	path: string | null;
+	/** kbps. */
+	bitrateKbps: number | null;
+	codec: string | null;
+	/** YouTube's raw `AUDIO_QUALITY_*` (streams only). */
+	audioQuality: string | null;
+	sampleRate: number | null;
+	bitDepth: number | null;
+	channels: number | null;
+}
+
+/** Technical details of the current track. No network: Rust answers from the last resolve or its
+ *  cache row, and reads a local file from disk. */
+export const trackInfo = (videoId: string) => invoke<TrackInfo>('track_info', { videoId });
+
 /** Environment + the redacted tail of `limusic.log`, for pasting into a bug report. */
 export const diagnostics = () => invoke<string>('diagnostics');
 /** Just the environment block, for prefilling the GitHub bug form. */

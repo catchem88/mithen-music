@@ -88,6 +88,13 @@ pub struct CachedStream {
     /// and a failure toast can name it. `ping_client` is not a substitute: the orchestrator prefers
     /// the *main* client's tracking block even when a fallback won the stream.
     pub client: Option<String>,
+    /// Declared technical metadata for the Information window (Ctrl+I), cached for the same reason as
+    /// the rest: a hit skips `/player`, and without it a replay inside the cache window could not
+    /// show bitrate/codec/quality/channels. `None` on rows written before the columns existed.
+    pub bitrate_kbps: Option<i64>,
+    pub codec: Option<String>,
+    pub audio_quality: Option<String>,
+    pub channels: Option<i64>,
 }
 
 impl Db {
@@ -167,14 +174,18 @@ impl Db {
                 value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS stream_url_cache (
-                video_id    TEXT PRIMARY KEY,
-                url         TEXT NOT NULL,
-                itag        INTEGER NOT NULL,
-                expires_at  INTEGER NOT NULL,
-                loudness_db REAL,
-                is_video    INTEGER,
-                ping_url    TEXT,
-                ping_client TEXT
+                video_id     TEXT PRIMARY KEY,
+                url          TEXT NOT NULL,
+                itag         INTEGER NOT NULL,
+                expires_at   INTEGER NOT NULL,
+                loudness_db  REAL,
+                is_video     INTEGER,
+                ping_url     TEXT,
+                ping_client  TEXT,
+                bitrate_kbps INTEGER,
+                codec        TEXT,
+                audio_quality TEXT,
+                channels     INTEGER
             );
             CREATE TABLE IF NOT EXISTS lyrics_cache (
                 video_id   TEXT PRIMARY KEY,
@@ -280,6 +291,18 @@ impl Db {
         // The resolving client, so a replay can rebuild its headers and name itself. Rows that
         // predate it have neither, which is the bug, so wipe them once like `is_video` above.
         if conn.execute("ALTER TABLE stream_url_cache ADD COLUMN client TEXT", []).is_ok() {
+            let _ = conn.execute("DELETE FROM stream_url_cache", []);
+        }
+        // The Information window's technical fields (Ctrl+I). Rows that predate them have nothing to
+        // show and a hit skips `/player`, so wipe once like `is_video`/`client` above: the next play
+        // refills with the metadata. Only the first ALTER tells us the columns are new.
+        let info_added = conn
+            .execute("ALTER TABLE stream_url_cache ADD COLUMN bitrate_kbps INTEGER", [])
+            .is_ok();
+        let _ = conn.execute("ALTER TABLE stream_url_cache ADD COLUMN codec TEXT", []);
+        let _ = conn.execute("ALTER TABLE stream_url_cache ADD COLUMN audio_quality TEXT", []);
+        let _ = conn.execute("ALTER TABLE stream_url_cache ADD COLUMN channels INTEGER", []);
+        if info_added {
             let _ = conn.execute("DELETE FROM stream_url_cache", []);
         }
         // Local files are no longer recorded as plays (see `AppState::on_position`), but 0.3.1
@@ -666,7 +689,7 @@ impl Db {
     pub fn get_stream(&self, video_id: &str, now: i64) -> Option<CachedStream> {
         let conn = self.0.lock().unwrap();
         conn.query_row(
-            "SELECT url, itag, expires_at, loudness_db, is_video, ping_url, ping_client, client FROM stream_url_cache WHERE video_id = ?1 AND expires_at > ?2",
+            "SELECT url, itag, expires_at, loudness_db, is_video, ping_url, ping_client, client, bitrate_kbps, codec, audio_quality, channels FROM stream_url_cache WHERE video_id = ?1 AND expires_at > ?2",
             rusqlite::params![video_id, now],
             |r| {
                 Ok(CachedStream {
@@ -678,6 +701,38 @@ impl Db {
                     ping_url: r.get(5)?,
                     ping_client: r.get(6)?,
                     client: r.get(7)?,
+                    bitrate_kbps: r.get(8)?,
+                    codec: r.get(9)?,
+                    audio_quality: r.get(10)?,
+                    channels: r.get(11)?,
+                })
+            },
+        )
+        .ok()
+    }
+
+    /// The cached row for `video_id` regardless of expiry, for the Information window (Ctrl+I): the
+    /// URL may be dead but the technical metadata behind it never changes. `None` when the track was
+    /// never cached - uploads and rustypipe URLs are deliberately not written (see `AppState::resolve`).
+    pub fn stream_info(&self, video_id: &str) -> Option<CachedStream> {
+        let conn = self.0.lock().unwrap();
+        conn.query_row(
+            "SELECT url, itag, expires_at, loudness_db, is_video, ping_url, ping_client, client, bitrate_kbps, codec, audio_quality, channels FROM stream_url_cache WHERE video_id = ?1",
+            rusqlite::params![video_id],
+            |r| {
+                Ok(CachedStream {
+                    url: r.get(0)?,
+                    itag: r.get(1)?,
+                    expires_at: r.get(2)?,
+                    loudness_db: r.get(3)?,
+                    is_video: r.get(4)?,
+                    ping_url: r.get(5)?,
+                    ping_client: r.get(6)?,
+                    client: r.get(7)?,
+                    bitrate_kbps: r.get(8)?,
+                    codec: r.get(9)?,
+                    audio_quality: r.get(10)?,
+                    channels: r.get(11)?,
                 })
             },
         )
@@ -699,8 +754,8 @@ impl Db {
     pub fn put_stream(&self, video_id: &str, row: &CachedStream, now: i64) {
         let conn = self.0.lock().unwrap();
         let _ = conn.execute(
-            "INSERT INTO stream_url_cache(video_id, url, itag, expires_at, loudness_db, is_video, ping_url, ping_client, client) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT(video_id) DO UPDATE SET url = excluded.url, itag = excluded.itag, expires_at = excluded.expires_at, loudness_db = excluded.loudness_db, is_video = excluded.is_video, ping_url = excluded.ping_url, ping_client = excluded.ping_client, client = excluded.client",
+            "INSERT INTO stream_url_cache(video_id, url, itag, expires_at, loudness_db, is_video, ping_url, ping_client, client, bitrate_kbps, codec, audio_quality, channels) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(video_id) DO UPDATE SET url = excluded.url, itag = excluded.itag, expires_at = excluded.expires_at, loudness_db = excluded.loudness_db, is_video = excluded.is_video, ping_url = excluded.ping_url, ping_client = excluded.ping_client, client = excluded.client, bitrate_kbps = excluded.bitrate_kbps, codec = excluded.codec, audio_quality = excluded.audio_quality, channels = excluded.channels",
             rusqlite::params![
                 video_id,
                 row.url,
@@ -710,7 +765,11 @@ impl Db {
                 row.is_video,
                 row.ping_url,
                 row.ping_client,
-                row.client
+                row.client,
+                row.bitrate_kbps,
+                row.codec,
+                row.audio_quality,
+                row.channels
             ],
         );
         let _ = conn.execute("DELETE FROM stream_url_cache WHERE expires_at <= ?1", [now]);
@@ -1467,6 +1526,10 @@ mod tests {
             ping_url: None,
             ping_client: None,
             client: None,
+            bitrate_kbps: None,
+            codec: None,
+            audio_quality: None,
+            channels: None,
         }
     }
 
@@ -2073,6 +2136,10 @@ mod tests {
             ping_url: Some("https://s.youtube.com/api/stats/playback".into()),
             ping_client: Some("WEB_REMIX".into()),
             client: Some("VISIONOS".into()),
+            bitrate_kbps: Some(256),
+            codec: Some("Opus".into()),
+            audio_quality: Some("AUDIO_QUALITY_HIGH".into()),
+            channels: Some(2),
         };
         d.put_stream("fresh", &fresh, now);
         let got = d.get_stream("fresh", now).unwrap_or_else(|| {
@@ -2084,6 +2151,12 @@ mod tests {
             "{tag}"
         );
         assert_eq!(got.ping_client.as_deref(), Some("WEB_REMIX"), "{tag}");
+        // The Information window's columns have to survive the same round trip (Ctrl+I).
+        assert_eq!(
+            (got.bitrate_kbps, got.codec.as_deref(), got.audio_quality.as_deref(), got.channels),
+            (Some(256), Some("Opus"), Some("AUDIO_QUALITY_HIGH"), Some(2)),
+            "{tag}"
+        );
         // Every one of these releases predates `client`, so the pre-column row has to be gone:
         // its headers cannot be rebuilt. Checked after the round trip above, which is what
         // proves `None` here means "deleted" and not "the query failed".

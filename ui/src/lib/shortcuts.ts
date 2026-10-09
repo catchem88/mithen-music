@@ -1,7 +1,8 @@
 // App-wide keyboard shortcuts. One window listener: the unmodified keys (space, ;) bail out on a
 // typing target first, everything else is gated on Ctrl/Cmd, so a key typed into a field costs a
 // couple of cheap checks and falls straight through. Zoom keeps its own listener (zoom.ts) because
-// it also owns the ctrl+wheel gesture.
+// it also owns the ctrl+wheel gesture. These are focused-window only; `apphotkeys.ts` is the list
+// Settings and the Ctrl+H dialog both show.
 import { browser } from '$app/environment';
 import * as api from './api';
 import { cycleRepeat, np, nudgeVolume, playback, refreshView, toggleMute, ui } from './player.svelte';
@@ -90,7 +91,7 @@ export function initShortcuts(mini = false) {
 		// Ctrl+Alt belongs to the global hotkeys (Ctrl+Alt+M would otherwise mute here too and the
 		// two toggles cancel out), and on Windows it is also how AltGr arrives, typing a character.
 		if (e.altKey) return;
-		if (mini && ('kKeE'.includes(e.key) || isHelpKey(e.key))) return;
+		if (mini && ('kKeEiI'.includes(e.key) || isHelpKey(e.key))) return;
 		// Out of the switch because the key is per-platform: on macOS ⌘H has to fall through
 		// untouched, so the window still hides.
 		if (isHelpKey(e.key)) {
@@ -117,6 +118,12 @@ export function initShortcuts(mini = false) {
 				// `playback.now`), and flipping the flag anyway would ambush the next play.
 				if (!playback.now) return;
 				np.open = !np.open;
+				break;
+			case 'i':
+			case 'I':
+				// Same guard as Ctrl+E: with nothing playing there is no track to describe.
+				if (!playback.now) return;
+				ui.trackInfoOpen = !ui.trackInfoOpen;
 				break;
 			case 'f':
 			case 'F':

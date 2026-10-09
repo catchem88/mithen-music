@@ -1,13 +1,14 @@
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 
 // Tauri's `zoomHotkeysEnabled` polyfill caps zoom-in at 1000%, which shreds the layout long before
-// it gets there (fixed chrome overlaps, the player bar eats the page). Same hotkeys, our own
-// ceiling. Persisted to localStorage (a pure UI preference, no backend round-trip) and reapplied on
-// launch: a 4K screen needs the same bump every start (issue #243).
+// it gets there (fixed chrome overlaps, the player bar eats the page), so the level list below is
+// this app's own ceiling. Zoom is set from Settings > Themes; persisted to localStorage (a pure UI
+// preference, no backend round-trip) and reapplied on launch, because a 4K screen needs the same
+// bump every start (issue #243).
 
 /**
- * The only zoom levels there are, the browser set minus the unusable ends. Both the hotkeys and the
- * Settings dropdown walk this list, so the dropdown always has a row to show for the current level.
+ * The only zoom levels there are, the browser set minus the unusable ends. The Settings dropdown
+ * walks this list, so it always has a row to show for the current level.
  */
 export const LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75];
 
@@ -25,24 +26,12 @@ export function setZoom(level: number) {
 		.catch(() => {});
 }
 
-/** Nearest index, so a level stored by an older build still steps somewhere sensible. */
-function nearest(v: number) {
-	return LEVELS.reduce((best, l, i) => (Math.abs(l - v) < Math.abs(LEVELS[best] - v) ? i : best), 0);
-}
-
-function step(by: number) {
-	setZoom(LEVELS[Math.min(Math.max(nearest(zoom.level) + by, 0), LEVELS.length - 1)]);
-}
-
 export function initZoom() {
 	const stored = Number(localStorage.getItem(KEY));
 	setZoom(LEVELS.includes(stored) ? stored : 1);
-	const onKey = (e: KeyboardEvent) => {
-		if (!e.ctrlKey && !e.metaKey) return;
-		if (e.key === '-') step(-1);
-		else if (e.key === '=' || e.key === '+') step(1);
-		else if (e.key === '0') setZoom(1);
-	};
+	// No keyboard zoom at all any more (in, out and reset were all removed): the Settings > Themes
+	// dropdown is the only way to change it, so there is nothing to listen for here beyond the
+	// ctrl+wheel suppression below.
 	// Ctrl+wheel is disabled outright, so it never zooms. The non-passive wheel listener is only
 	// bound while a gesture is in flight: `preventDefault` is what stops the webview doing its own
 	// ctrl+wheel zoom, but a non-passive `wheel` listener on the window tells Chromium (so WebView2,
@@ -70,13 +59,11 @@ export function initZoom() {
 	const arm = (e: WheelEvent) => {
 		if (e.ctrlKey) bindWheel(true);
 	};
-	window.addEventListener('keydown', onKey);
 	window.addEventListener('keydown', track);
 	window.addEventListener('keyup', track);
 	window.addEventListener('blur', release);
 	window.addEventListener('wheel', arm, { passive: true });
 	return () => {
-		window.removeEventListener('keydown', onKey);
 		window.removeEventListener('keydown', track);
 		window.removeEventListener('keyup', track);
 		window.removeEventListener('blur', release);

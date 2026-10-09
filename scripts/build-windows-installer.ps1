@@ -14,6 +14,15 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
 
+# Pin RUSTFLAGS: libmpv's import library lives only in .libmpv, and cargo hashes RUSTFLAGS into every
+# unit's fingerprint, so it has to match what `dev-run.ps1` uses or the two profiles' caches
+# disagree. Leaving it to the caller is a silent trap - without it the link dies with
+# "LNK1181: cannot open input file 'mpv.lib'".
+if (-not (Test-Path '.libmpv/mpv.lib')) {
+    throw "'.libmpv/mpv.lib' not found - build the libmpv import library first (docs/BUILD-PLATFORMS.md)."
+}
+$env:RUSTFLAGS = "-L native=$root\.libmpv"
+
 $tauri = $null
 # Prefer the .cmd shim: the npm .ps1 shim is blocked when PowerShell script execution is disabled.
 if (Get-Command tauri.cmd -ErrorAction SilentlyContinue) { $tauri = (Get-Command tauri.cmd).Source }

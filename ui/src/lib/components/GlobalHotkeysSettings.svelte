@@ -11,6 +11,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Switch } from '$lib/components/ui/switch';
 	import { t } from '$lib/i18n.svelte';
+	import { APP_HOTKEY_GROUPS } from '$lib/apphotkeys';
 	import {
 		hotkeys,
 		HOTKEY_ACTIONS,
@@ -91,6 +92,8 @@
 		</div>
 	</section>
 
+	<h2 class="mb-3 px-1 text-sm font-semibold">{t('settings.hotkeys.group_global')}</h2>
+
 	{#if !hotkeys.enabled}
 		<div class="rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">
 			{t('settings.hotkeys.enable_hint')}
@@ -139,6 +142,34 @@
 			</Button>
 		</div>
 	{/if}
+
+	<!-- Application hotkeys: fixed, so this list is read-only. Same source as the Ctrl+H dialog
+	     (`apphotkeys.ts`), and shown even when the global switch is off: it does not depend on it. -->
+	<section class="mt-8">
+		<h2 class="mb-1 px-1 text-sm font-semibold">{t('settings.hotkeys.group_application')}</h2>
+		<p class="mb-3 px-1 text-xs leading-relaxed text-muted-foreground">
+			{t('settings.hotkeys.group_application_hint')}
+		</p>
+		{#each APP_HOTKEY_GROUPS as group (group.titleKey)}
+			<h3 class="{LABEL} mt-4">{t(group.titleKey)}</h3>
+			<div class="{CARD} mb-4">
+				{#each group.rows as row (row.labelKey)}
+					<div class="flex items-center justify-between gap-4 px-4 py-2.5">
+						<span class="min-w-0 flex-1 text-sm text-muted-foreground">{t(row.labelKey)}</span>
+						<div class="flex shrink-0 flex-wrap items-center gap-1">
+							{#each splitShortcut(row.keys) as key}
+								<kbd
+									class="inline-flex min-w-[20px] items-center justify-center rounded border bg-muted/80 px-2 py-0.5 font-mono text-[11px] font-semibold text-foreground shadow-xs select-none"
+								>
+									{key}
+								</kbd>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/each}
+	</section>
 </div>
 
 {#snippet hotkeyRow(action: HotkeyActionDef)}

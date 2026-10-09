@@ -655,7 +655,60 @@ pub fn playback_data(video_id: &str, path: &str) -> Result<crate::orchestrator::
         is_video: None,
         thumbnail: None,
         stream_client: "local".to_owned(),
+        // Local technical metadata (bitrate/codec/sample rate/channels) is read from the file itself
+        // when the Information window asks, not carried here: it is not needed to play, and a scan
+        // would pay for it on every track.
+        stream_info: crate::orchestrator::StreamInfo::default(),
     })
+}
+
+/// The file's own technical metadata, for the Information window (Ctrl+I), read on demand rather
+/// than during a scan: it is only wanted when someone looks, and a full parse per track would be
+/// paid on every scan otherwise.
+pub struct LocalTech {
+    /// kbps, like `StreamInfo.bitrate_kbps` (lofty reports bitrate in kbps, YouTube in bps).
+    pub bitrate_kbps: Option<u32>,
+    pub codec: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u8>,
+    pub channels: Option<u32>,
+}
+
+pub fn technical_info(path: &str) -> Option<LocalTech> {
+    let tagged = lofty::probe::Probe::open(Path::new(path)).ok()?.read().ok()?;
+    let props = tagged.properties();
+    Some(LocalTech {
+        bitrate_kbps: props.audio_bitrate().or_else(|| props.overall_bitrate()),
+        codec: Some(format_label(tagged.file_type()).to_owned()),
+        sample_rate: props.sample_rate(),
+        bit_depth: props.bit_depth(),
+        channels: props.channels().map(u32::from),
+    })
+}
+
+/// A readable name for lofty's container/format family, shown as the local "codec". lofty identifies
+/// the format, not always the exact codec inside it (an MP4 can hold AAC or ALAC); that is the trade
+/// taken over decoding the file a second time.
+fn format_label(t: lofty::file::FileType) -> &'static str {
+    use lofty::file::FileType as F;
+    match t {
+        F::Mpeg => "MP3",
+        F::Mp4 => "MP4",
+        F::Aac => "AAC",
+        F::Flac => "FLAC",
+        F::Opus => "Opus",
+        F::Vorbis => "Vorbis",
+        F::Speex => "Speex",
+        F::Wav => "WAV",
+        F::Aiff => "AIFF",
+        F::Ape => "APE",
+        F::WavPack => "WavPack",
+        F::Mpc => "Musepack",
+        F::Custom(name) => name,
+        // `FileType` is `#[non_exhaustive]`: a format lofty learns later still gets a row, just an
+        // unnamed one.
+        _ => "Unknown",
+    }
 }
 
 /// Let the webview fetch exactly the artwork we hand it, and nothing else.

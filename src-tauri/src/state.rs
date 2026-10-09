@@ -107,6 +107,10 @@ pub struct AppState {
     /// after the user signed out and putting them back in. Async because it is held across those
     /// awaits, which a std `Mutex` cannot be.
     auth: tokio::sync::Mutex<()>,
+    /// Technical metadata of the track that most recently resolved, for the Information window
+    /// (Ctrl+I): `(videoId, StreamInfo)`. In memory because upload and rustypipe URLs are
+    /// deliberately never cached, so the DB row lookup would answer nothing for exactly those tracks.
+    stream_info: std::sync::Mutex<Option<(String, crate::orchestrator::StreamInfo)>>,
 }
 
 /// Repeat mode for the queue. Serialized lowercase for the UI + `queue_json`.
@@ -470,6 +474,36 @@ impl AppState {
             last_media_state: std::sync::Mutex::new(None),
             last_queue_fingerprint: AtomicU64::new(0),
             last_persisted_fingerprint: AtomicU64::new(0),
+            stream_info: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Remember the current track's technical metadata for the Information window (Ctrl+I).
+    fn remember_stream_info(&self, video_id: &str, info: &crate::orchestrator::StreamInfo) {
+        if let Ok(mut slot) = self.stream_info.lock() {
+            *slot = Some((video_id.to_owned(), info.clone()));
+        }
+    }
+
+    /// The metadata the Information window shows: the in-memory copy when it is the track that just
+    /// resolved, otherwise the cache row whatever its age - the URL may be dead, the metadata does
+    /// not change. Empty when the track was never resolved through either.
+    pub fn stream_info_for(&self, video_id: &str) -> crate::orchestrator::StreamInfo {
+        if let Ok(slot) = self.stream_info.lock() {
+            if let Some((id, info)) = slot.as_ref() {
+                if id == video_id {
+                    return info.clone();
+                }
+            }
+        }
+        match self.db.stream_info(video_id) {
+            Some(c) => crate::orchestrator::StreamInfo {
+                bitrate_kbps: c.bitrate_kbps,
+                codec: c.codec,
+                audio_quality: c.audio_quality,
+                channels: c.channels,
+            },
+            None => crate::orchestrator::StreamInfo::default(),
         }
     }
 
@@ -1178,7 +1212,7 @@ impl AppState {
                 Some(k) => self.orchestrator.headers_for(k, false),
                 None => Default::default(),
             };
-            return Ok(PlaybackData {
+            let data = PlaybackData {
                 video_id: video_id.to_owned(),
                 stream_url: c.url,
                 itag: c.itag,
@@ -1203,7 +1237,15 @@ impl AppState {
                 // to the queue row's flag, which is exactly the thing that can't be trusted.
                 is_video: c.is_video,
                 stream_client: c.client.unwrap_or_else(|| "cache".to_owned()),
-            });
+                stream_info: crate::orchestrator::StreamInfo {
+                    bitrate_kbps: c.bitrate_kbps,
+                    codec: c.codec.clone(),
+                    audio_quality: c.audio_quality.clone(),
+                    channels: c.channels,
+                },
+            };
+            self.remember_stream_info(video_id, &data.stream_info);
+            return Ok(data);
         }
         let data = self
             .orchestrator
@@ -1226,10 +1268,15 @@ impl AppState {
                     ping_url: data.playback_ping.as_ref().map(|p| p.url.clone()),
                     ping_client: data.playback_ping.as_ref().map(|p| p.client.clone()),
                     client: Some(data.stream_client.clone()),
+                    bitrate_kbps: data.stream_info.bitrate_kbps,
+                    codec: data.stream_info.codec.clone(),
+                    audio_quality: data.stream_info.audio_quality.clone(),
+                    channels: data.stream_info.channels,
                 },
                 now,
             );
         }
+        self.remember_stream_info(video_id, &data.stream_info);
         Ok(data)
     }
 

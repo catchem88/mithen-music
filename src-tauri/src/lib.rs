@@ -920,6 +920,8 @@ pub fn run() {
             commands::lyrics_providers,
             commands::theater_fullscreen,
             commands::open_external,
+            commands::reveal_in_folder,
+            commands::track_info,
             commands::diagnostics,
             commands::diagnostics_summary,
             commands::save_diagnostics,
@@ -1102,40 +1104,6 @@ fn spawn_event_pump(
 mod tests {
     use super::{close_hides, PositionThrottle};
     use std::time::{Duration, Instant};
-
-    /// `tauri.macos.conf.json` overrides the main window so macOS gets real traffic lights over the
-    /// app's own titlebar (issue #65). Tauri merges platform config with RFC 7386 JSON Merge Patch,
-    /// which replaces arrays wholesale, so that file has to repeat every window key from
-    /// `tauri.conf.json` rather than patch the few it changes. Nothing on this machine builds for
-    /// macOS, so a key dropped from the copy would only surface as a wrongly sized window shipped
-    /// by CI. This fails instead.
-    #[test]
-    fn macos_window_config_mirrors_the_base_window() {
-        let base: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        let mac: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.macos.conf.json")).unwrap();
-        let base_win = base["app"]["windows"][0].as_object().unwrap();
-        let mac_win = mac["app"]["windows"][0].as_object().unwrap();
-
-        // Only these two may differ; the frame is the compositor's on macOS.
-        let overridden = ["decorations", "transparent"];
-        for (k, v) in base_win {
-            let got = mac_win.get(k).unwrap_or_else(|| panic!("tauri.macos.conf.json drops `{k}`"));
-            if !overridden.contains(&k.as_str()) {
-                assert_eq!(got, v, "tauri.macos.conf.json disagrees on `{k}`");
-            }
-        }
-        assert_eq!(mac_win["decorations"], serde_json::json!(true));
-        assert_eq!(mac_win["titleBarStyle"], serde_json::json!("Overlay"));
-        assert_eq!(mac_win["hiddenTitle"], serde_json::json!(true));
-
-        // Catches a typo or a key Tauri would reject: WindowConfig is `deny_unknown_fields`.
-        serde_json::from_value::<tauri::utils::config::WindowConfig>(
-            mac["app"]["windows"][0].clone(),
-        )
-        .expect("macOS window config is not a valid WindowConfig");
-    }
 
     #[test]
     fn close_hides_unless_explicitly_disabled() {

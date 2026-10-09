@@ -47,6 +47,22 @@ pub struct PlaybackData {
     pub is_video: Option<bool>,
     /// Which client produced the stream (diagnostics). context/06.
     pub stream_client: String,
+    /// Declared technical metadata for the Information window (Ctrl+I). Carried on the resolve
+    /// result so it can be cached and shown without a second `/player` call.
+    #[serde(skip)]
+    pub stream_info: StreamInfo,
+}
+
+/// The technical fields the Information window shows for a streamed track. Every field is optional:
+/// a client that does not report one leaves it `None`, and a cache row written before these columns
+/// existed has nothing to say. `audio_quality` is YouTube's raw `AUDIO_QUALITY_*` string, mapped to
+/// a label in the UI (i18n).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct StreamInfo {
+    pub bitrate_kbps: Option<i64>,
+    pub codec: Option<String>,
+    pub audio_quality: Option<String>,
+    pub channels: Option<i64>,
 }
 
 /// The watch-history ping for one play: `playbackTracking.videostatsPlaybackUrl.baseUrl` plus the
@@ -547,6 +563,14 @@ impl Orchestrator {
                 // rustypipe answers without a `musicVideoType`, so the queue row's flag stands.
                 is_video: None,
                 stream_client: "rustypipe".to_owned(),
+                // rustypipe reports its own MIME and bitrate, so these two are known even here;
+                // it exposes no audio-quality label or channel count.
+                stream_info: StreamInfo {
+                    bitrate_kbps: (c.bitrate > 0).then(|| (c.bitrate / 1000) as i64),
+                    codec: innertube::codec_label(&c.mime),
+                    audio_quality: None,
+                    channels: None,
+                },
             }),
             Err(e) => {
                 tracing::error!(video_id, error = %e, "rustypipe fallback failed");
@@ -810,6 +834,14 @@ impl Orchestrator {
             thumbnail: main_resp.as_ref().and_then(best_thumbnail),
             is_video: vd.and_then(|v| v.is_music_video()),
             stream_client: client.to_owned(),
+            stream_info: StreamInfo {
+                // YouTube's `bitrate` is bits per second; the window shows kbps (lofty reports
+                // local files in kbps too, so both sides agree).
+                bitrate_kbps: (format.bitrate > 0).then(|| format.bitrate / 1000),
+                codec: format.codec_label(),
+                audio_quality: format.audio_quality.clone(),
+                channels: format.audio_channels.map(i64::from),
+            },
         }
     }
 }

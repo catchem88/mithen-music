@@ -1960,6 +1960,114 @@ fn open_in_browser(url: &str) -> Result<(), String> {
     }
 }
 
+/// Reveal a local file in Explorer, with the file selected. The Windows-only sibling of
+/// [`open_external`]; the Information window's path row calls one or the other, never both.
+#[tauri::command]
+pub fn reveal_in_folder(path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err("the file is no longer there".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows::core::{HSTRING, PCWSTR};
+        use windows::Win32::System::Com::CoTaskMemFree;
+        use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+        use windows::Win32::UI::Shell::{SHOpenFolderAndSelectItems, SHParseDisplayName};
+
+        // The shell's own "show in folder", which is what Explorer's context menu calls. Preferred
+        // over spawning `explorer.exe /select,`: that switch is parsed by Explorer itself and quietly
+        // opens its default folder (Documents) whenever the quoting is not exactly what it expects.
+        let name = HSTRING::from(path.as_str());
+        let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
+        let parsed = unsafe {
+            SHParseDisplayName(
+                PCWSTR(name.as_ptr()),
+                None::<&windows::Win32::System::Com::IBindCtx>,
+                &mut pidl,
+                0,
+                None,
+            )
+        };
+        if parsed.is_ok() && !pidl.is_null() {
+            let opened = unsafe { SHOpenFolderAndSelectItems(pidl, None, 0) };
+            unsafe { CoTaskMemFree(Some(pidl as *const core::ffi::c_void)) };
+            if opened.is_ok() {
+                return Ok(());
+            }
+            tracing::warn!(error = ?opened, "SHOpenFolderAndSelectItems failed; falling back to explorer.exe");
+        } else {
+            tracing::warn!(error = ?parsed, "SHParseDisplayName failed; falling back to explorer.exe");
+        }
+
+        // Fallback: `explorer.exe` parses `/select,` itself and only accepts the *path* quoted
+        // (`/select,"C:\dir\file.mp3"`). `Command::arg` would quote the whole switch as soon as the
+        // path has a space, which it then ignores, so the argument is passed verbatim.
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer.exe")
+            .raw_arg(format!("/select,\"{path}\""))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("revealing a file is only supported on Windows".into())
+    }
+}
+
+/// What the Information window (Ctrl+I) shows for the current track. Local files and streams are two
+/// different worlds (a file has a sample rate and bit depth, a stream has YouTube's quality label),
+/// so this is one shape with a `local` flag and both sets of fields optional; the UI picks a side.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackInfo {
+    pub local: bool,
+    /// The file on disk, for the "open folder" action. Local only: the YouTube page link is derived
+    /// from the videoId in the UI, so it never crosses this boundary.
+    pub path: Option<String>,
+    /// kbps.
+    pub bitrate_kbps: Option<u32>,
+    /// The codec from the stream's MIME type, or lofty's container family for a local file.
+    pub codec: Option<String>,
+    /// YouTube's raw `AUDIO_QUALITY_*`. Local files have no such concept and use sample rate/bit
+    /// depth instead. Mapped to a label in the UI (i18n).
+    pub audio_quality: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u8>,
+    pub channels: Option<u32>,
+}
+
+/// Technical details of the current track, for the Information window (Ctrl+I). A local file is read
+/// from disk here; a stream is answered from the last resolve (or its cache row), so this never
+/// touches the network.
+#[tauri::command]
+pub fn track_info(state: St<'_>, video_id: String) -> TrackInfo {
+    if let Some(path) = crate::local::song_path(&video_id) {
+        let t = crate::local::technical_info(path);
+        return TrackInfo {
+            local: true,
+            path: Some(path.to_owned()),
+            bitrate_kbps: t.as_ref().and_then(|t| t.bitrate_kbps),
+            codec: t.as_ref().and_then(|t| t.codec.clone()),
+            audio_quality: None,
+            sample_rate: t.as_ref().and_then(|t| t.sample_rate),
+            bit_depth: t.as_ref().and_then(|t| t.bit_depth),
+            channels: t.as_ref().and_then(|t| t.channels),
+        };
+    }
+    let info = state.inner().stream_info_for(&video_id);
+    TrackInfo {
+        local: false,
+        path: None,
+        bitrate_kbps: info.bitrate_kbps.map(|b| b as u32),
+        codec: info.codec,
+        audio_quality: info.audio_quality,
+        sample_rate: None,
+        bit_depth: None,
+        channels: info.channels.map(|c| c as u32),
+    }
+}
+
 // --- Diagnostics ----------------------------------------------------------------------------
 
 /// The bug-report blob for Settings ▸ About: environment header plus the redacted tail of

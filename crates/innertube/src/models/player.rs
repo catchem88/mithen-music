@@ -176,6 +176,29 @@ pub struct AudioTrack {
     pub audio_is_default: Option<bool>,
 }
 
+/// A human label for an audio codec, read off a MIME type (`audio/webm; codecs="opus"` -> `Opus`).
+/// For the Information window (Ctrl+I). `None` when the MIME carries no `codecs` parameter, and an
+/// unrecognised codec string is returned as-is rather than dropped.
+pub fn codec_label(mime_type: &str) -> Option<String> {
+    let params = mime_type.split("codecs=").nth(1)?;
+    let first = params.trim().trim_matches('"').trim_matches('\'').split(',').next()?.trim();
+    let label = match first {
+        "opus" => "Opus",
+        "vorbis" => "Vorbis",
+        "flac" => "FLAC",
+        "alac" => "ALAC",
+        "ec-3" => "Dolby Digital Plus",
+        "ac-3" => "Dolby Digital",
+        c if c.starts_with("mp4a.40.2") => "AAC-LC",
+        c if c.starts_with("mp4a.40.5") => "HE-AAC",
+        c if c.starts_with("mp4a.40.29") => "HE-AAC v2",
+        c if c.starts_with("mp4a.40.34") => "MP3",
+        c if c.starts_with("mp4a") => "AAC",
+        other => other,
+    };
+    Some(label.to_owned())
+}
+
 impl Format {
     /// Audio-only formats have no width. context/03.
     pub fn is_audio(&self) -> bool {
@@ -200,6 +223,10 @@ impl Format {
     /// The orchestrator hands this to the cipher webview to deobfuscate (context/05, Phase 2).
     pub fn cipher_string(&self) -> Option<&str> {
         self.signature_cipher.as_deref().or(self.cipher.as_deref())
+    }
+    /// A human label for the audio codec, read off `mimeType` (see [`codec_label`]).
+    pub fn codec_label(&self) -> Option<String> {
+        codec_label(&self.mime_type)
     }
     fn quality_rank(&self) -> u8 {
         match self.audio_quality.as_deref() {

@@ -47,6 +47,7 @@
 	import VideoSurface from '$lib/components/VideoSurface.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
+	import TrackInfoDialog from '$lib/components/TrackInfoDialog.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { auth, initApp, np, playback, prefs, ui } from '$lib/player.svelte';
 	import { video } from '$lib/video.svelte';
@@ -303,6 +304,7 @@
 
 	<CommandPalette />
 	<KeyboardShortcuts />
+	<TrackInfoDialog />
 	<AddToPlaylist />
 	<NewPlaylistDialog />
 	<ShareDialog />
