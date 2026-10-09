@@ -1086,29 +1086,34 @@
 				aria-busy={resorting}
 			>
 				{#if shown.length}
-					<!-- The padding stands in for the rows outside the window, so the scrollbar is the
-					     length of the whole playlist even though only ~30 rows exist.
+					<!-- Explicit height plus an absolutely positioned slice: the scrollable height is exactly the
+					     list, whatever slice of it is rendered. `padTop + rendered + padBottom` only adds up to
+					     `total * rowPx` while a row measures exactly `rowPx`; when it does not, the height tracks
+					     how many rows are on screen, which is what made the end of a long playlist scrollable
+					     past the last song and then snap back.
 					     data-rows: what the scroller measures row 0's position from. -->
-					<div data-rows style="padding-top:{win.padTop}px;padding-bottom:{win.padBottom}px">
-						{#each shown.slice(win.start, win.end) as item, i (JSON.stringify([item.video_id, win.start + i]))}
-							{@const n = win.start + i}
-							<!-- data-row: what the scroller measures a row's real height from. -->
-							<div data-row>
-								<TrackRow
-									song={item}
-									{selection}
-									selectionKey={selection.visibleKeys[n]}
-									index={n}
-									showPlayCount
-									active={item.video_id === nowId}
-									onplay={() => playAll(n)}
-									onAdd={() => openAddToPlaylist(item)}
-									onRemove={isLiked || item.set_video_id
-										? () => removeTrack(item)
-										: undefined}
-								/>
-							</div>
-						{/each}
+					<div data-rows class="relative" style="height:{shown.length * sc.rowPx}px">
+						<div class="absolute inset-x-0" style="top:{win.padTop}px">
+							{#each shown.slice(win.start, win.end) as item, i (JSON.stringify([item.video_id, win.start + i]))}
+								{@const n = win.start + i}
+								<!-- data-row: what the scroller measures a row's real height from. -->
+								<div data-row>
+									<TrackRow
+										song={item}
+										{selection}
+										selectionKey={selection.visibleKeys[n]}
+										index={n}
+										showPlayCount
+										active={item.video_id === nowId}
+										onplay={() => playAll(n)}
+										onAdd={() => openAddToPlaylist(item)}
+										onRemove={isLiked || item.set_video_id
+											? () => removeTrack(item)
+											: undefined}
+									/>
+								</div>
+							{/each}
+						</div>
 					</div>
 				{:else if filtering}
 					<p class="p-4 text-sm text-muted-foreground">
@@ -1138,16 +1143,22 @@
 							</Button>
 						</div>
 					{:else}
-						<!-- The sentinel sits above the skeletons: it triggers the next page as it scrolls
-						     into range, so the rest of a long playlist arrives without a button. -->
+						<!-- The sentinel is the only thing in flow here, and it is zero-height: the scrollable
+						      content has to end exactly at the last row. Anything that adds height below it
+						(placeholder rows while a page loads) makes the end of a long playlist scrollable past
+ last song, then clamp back when that page lands - the bounce. The loading feedback
+ in a fixed pill instead, which cannot change the scroll height. -->
 						<div aria-busy={loadingMore}>
 							<div {@attach sentinel}></div>
-							{#if loadingMore}
-								{#each Array(4) as _, i (i)}
-									<TrackRowSkeleton />
-								{/each}
-							{/if}
 						</div>
+						{#if loadingMore}
+							<div class="pointer-events-none fixed inset-x-0 bottom-24 z-30 flex justify-center">
+								<span
+									class="rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground shadow-lg">
+									{t('common.loading')}
+								</span>
+							</div>
+						{/if}
 					{/if}
 				{/if}
 			</div>

@@ -59,12 +59,15 @@ export function rowScroller() {
 				viewportPx = node.clientHeight;
 				// One layout read per scroll frame, on a box the browser has just laid out anyway.
 				//
-				// Largest seen, not latest. A row only ever under-reports: `contain-intrinsic-size`
-				// on TrackRow lands on the content box, so a row WebKit has skipped answers 56px
-				// while the same row occupies 72px once it is drawn. Taking the max settles on the
-				// drawn height in one step and cannot then oscillate between the two.
+				// Measured, in both directions. This used to be "largest seen", from when a skipped
+				// row answered with its `contain-intrinsic-size` rather than its real height and the
+				// number could only grow; the windowed lists no longer use `content-visibility`, so a
+				// value that cannot come back down is now the bug: `rowPx` is what the whole list's
+				// height is built from, and every pixel it is off by is multiplied by the rendered-row
+				// count, which is what made the scroll height move under the pointer at the end of a
+				// long list.
 				const h = node.querySelector('[data-row]')?.getBoundingClientRect().height ?? 0;
-				if (h > rowPx) rowPx = h;
+				if (h > 0) rowPx = h;
 				// Where row 0 sits, for a container that scrolls a header away above the rows. Latest,
 				// not largest: the header genuinely changes height (expanding a description), and a
 				// stale offset would put the window in the wrong place.

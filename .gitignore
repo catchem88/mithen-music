@@ -36,6 +36,8 @@ scripts/triage.py
 
 # MithenMusic fork
 *.exe
+# Local build/run logs (scripts/build-windows-installer.cmd, dev-run, anything run by hand)
+*.log
 .vscode
 .code-workspace
 *.code-workspace
