@@ -8,11 +8,12 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
+notify = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
@@ -23,7 +24,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 rand = "0.8"
 
 # Release profile: thin LTO + one codegen unit for cross-crate optimization, symbols stripped
-# for size (this binary ships via AppImage self-update — size = every user's download).
+# for size (this binary ships via the NSIS installer — size = every user's download).
 # panic stays "unwind": an abort in the mpv event thread or a tokio task would kill playback
 # for the whole app instead of degrading.
 [profile.release]
@@ -32,9 +33,9 @@ codegen-units = 1
 strip = "symbols"
 
 # Iteration profile: the develop/run loop for the YouTube-facing code (innertube, cipher, potoken),
-# which is statically linked, so any change forces a relink of the whole 112 MB binary. Same runtime
+# which is statically linked, so any change forces a relink of the whole ~112 MB binary. Same runtime
 # shape as release (opt-level 3, no debug assertions) but WITHOUT the thin-LTO + one-codegen-unit
-# link that makes each release build take minutes. Build with `scripts/dev-run.ps1` (or
+# link that makes each release build take minutes. Build with `scripts/dev-run.cmd` (or
 # `cargo build --profile fast -p mithenmusic-app`) and run target/fast/mithenmusic-app.exe. Ship with
 # `release`; never ship this one.
 [profile.fast]

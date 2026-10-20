@@ -50,8 +50,9 @@
 	import TrackInfoDialog from '$lib/components/TrackInfoDialog.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { auth, initApp, np, playback, prefs, ui } from '$lib/player.svelte';
+	import { isLocalId } from '$lib/api';
 	import { video } from '$lib/video.svelte';
-	import { win, initWin } from '$lib/win.svelte';
+	import { initWin, windowCorners } from '$lib/win.svelte';
 	import { initZoom } from '$lib/zoom.svelte';
 	import { initShortcuts } from '$lib/shortcuts';
 	import { initErrorLog } from '$lib/errlog';
@@ -134,6 +135,7 @@
 	// Queue and lyrics toggle independently and both float over the page rather than docking into
 	// it — two docked columns squeezed the content down to an unusable strip. At lg+ they sit side
 	// by side over the content; narrower, they stack (see QueuePanel / LyricsPanel).
+	// The queue and lyrics panels dock beside the content or stack over it (see the two panels).
 	let queueOpen = $state(false);
 	let lyricsOpen = $state(false);
 	// Two ways the now-playing view and these panels can divide the same two buttons, picked in
@@ -148,11 +150,11 @@
 	const showLyrics = $derived(lyricsOpen && !tabbed);
 
 	// "Adapt colors to artwork": re-run on every track change and on the toggle itself. The 120px
-	// cover is the one the player bar has already loaded, so this costs no extra request.
+	// cover is the one the player bar has already loaded, so this costs no extra request. A Matugen
+	// palette owns every colour while it's on, so the artwork stands down.
+	const artworkTint = $derived(appearance.artworkAccent && !appearance.matugen);
 	$effect(() => {
-		applyArtworkAccent(
-			appearance.artworkAccent ? thumb(playback.now?.thumbnail, 120) : null
-		);
+		applyArtworkAccent(artworkTint ? thumb(playback.now?.thumbnail, 120) : null);
 	});
 	// The accent is banded against the active theme (a cover's colour that reads on a light page is
 	// mud on a dark one, #137), so flipping light/dark has to re-derive it from the same cover.
@@ -162,7 +164,7 @@
 	// Same colour, one track early. Reading it off the queue instead of the track change means the
 	// palette starts moving on the frame the artwork swaps, not after a fetch and a decode.
 	$effect(() => {
-		if (!appearance.artworkAccent) return;
+		if (!artworkTint) return;
 		const q = playback.queue;
 		prewarmArtworkAccent(thumb(q.items[q.currentIndex + 1]?.thumbnail, 120));
 	});
@@ -226,20 +228,16 @@
 	<MiniPlayer />
 {:else}
 	<!-- The window itself is transparent; this root paints the background and, when not maximized,
-	     rounds the corners (the compositor can't round an undecorated window for us). Theater mode
-	     counts as maximized here: it is fullscreen, and rounding it clips the corners of a view that
-	     is meant to reach every edge (#139). With a system frame (win.chrome) the compositor rounds
-	     for us, so ours would only fight it.
-	     12px, not `rounded-lg`: that resolves to --radius, which every theme sets differently, so
-	     the window corner used to change with the theme. This is the GNOME/Adwaita value (#65). -->
+	     rounds the corners (the compositor can't round an undecorated window for us on Linux).
+	     Theater mode counts as maximized here: it is fullscreen, and rounding it clips the corners
+	     of a view that is meant to reach every edge (#139). With a system frame (win.chrome), or on
+	     Windows 11, the compositor rounds for us, so ours would only fight it (#504).
+	     Invisible while theater mode shows mpv's picture: theater is transparent over the hole, and
+	     the titlebar, sidebar or player bar under it would paint over the video. -->
 	<div
 		class="relative flex h-screen flex-col overflow-hidden text-foreground {video.hole
 			? ''
-			: 'bg-background'} {win.maximized ||
-		ui.theaterOpen ||
-		win.chrome !== 'off'
-			? ''
-			: 'rounded-[12px]'}"
+			: 'bg-background'} {windowCorners()} {ui.theaterOpen && video.hole ? 'invisible' : ''}"
 	>
 		{#if video.hole}
 			<!-- Linux: mpv draws the music video underneath the page (nativevideo.rs), so the page
@@ -248,7 +246,7 @@
 			     root's own background and <main> step aside while it is up (both paint the box). -->
 			<div
 				aria-hidden="true"
-				class="pointer-events-none absolute -z-10 rounded-2xl"
+				class="pointer-events-none visible absolute -z-10 rounded-2xl"
 				style="left:{video.hole.x}px;top:{video.hole.y}px;width:{video.hole.w}px;height:{video.hole
 					.h}px;box-shadow:0 0 0 100vmax var(--background)"
 			></div>
@@ -276,7 +274,10 @@
 			     parking container until the view borrows the picture. Not on Linux, where mpv draws the
 			     picture itself (prefs.nativeVideo). -->
 			{#if !prefs.nativeVideo}<VideoSurface />{/if}
-			{#if np.open && playback.now}<NowPlaying queueOpen={showQueue} lyricsOpen={showLyrics} />{/if}
+			{#if np.open && playback.now}<NowPlaying
+					queueOpen={showQueue}
+					lyricsOpen={showLyrics}
+				/>{/if}
 			<!-- Lyrics before queue: side by side over the page, lyrics on the left, queue on the right. -->
 			{#if showLyrics}<LyricsPanel onClose={() => (lyricsOpen = false)} queueOpen={showQueue} />{/if}
 			{#if showQueue}<QueuePanel onClose={() => (queueOpen = false)} />{/if}
@@ -290,7 +291,10 @@
 				<PlayerBar
 					onToggleQueue={() => (tabbed ? (np.tab = 'queue') : (queueOpen = !queueOpen))}
 					queueOpen={tabbed ? np.tab === 'queue' : queueOpen}
-					onToggleLyrics={() => (tabbed ? (np.tab = 'lyrics') : (lyricsOpen = !lyricsOpen))}
+					onToggleLyrics={() => {
+						if (tabbed) np.tab = 'lyrics';
+						else lyricsOpen = !lyricsOpen;
+					}}
 					lyricsOpen={tabbed ? np.tab === 'lyrics' : lyricsOpen}
 				/>
 			</div>

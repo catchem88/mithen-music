@@ -251,7 +251,7 @@
 		diagError = '';
 		try {
 			const path = await save({
-				defaultPath: `limusic-diagnostics-${new Date().toISOString().slice(0, 10)}.txt`,
+				defaultPath: `mithenmusic-diagnostics-${new Date().toISOString().slice(0, 10)}.txt`,
 				filters: [{ name: 'Text', extensions: ['txt'] }]
 			});
 			if (!path) return;
@@ -1185,7 +1185,7 @@
 
 {#snippet clientList()}
 	<p class="mb-3 max-w-prose text-xs leading-relaxed text-muted-foreground">
-		{t('settings.general.stream_clients_hint', { var: 'LIMUSIC_DISABLED_CLIENTS' })}
+		{t('settings.general.stream_clients_hint', { var: 'MithenMusic_DISABLED_CLIENTS' })}
 	</p>
 	<div class="flex flex-col gap-2">
 		{#each clients as name (name)}

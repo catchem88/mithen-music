@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use innertube::{
-    AlbumPage, ArtistPage, BrowseItem, HistoryGroup, HomePage, MoodSection, PlaylistContinuation,
-    PlaylistPage, PlaylistSort, Rating, SearchResults, SearchSuggestions, SongItem,
+    AlbumPage, ArtistPage, BrowseItem, HistoryGroup, HomePage, MoodSection,
+    PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, Provenance, Rating,
+    SearchResults, SearchSuggestions, SongItem, VoteState,
 };
 use tauri::{Emitter, Manager, State};
 
@@ -38,6 +39,15 @@ pub async fn search_videos(state: St<'_>, query: String) -> Result<Vec<SongItem>
     let client = metadata_client(&state)?;
     let result = state.it.search_videos(client, &query).await.map_err(|e| e.to_string())?;
     Ok(result.items)
+}
+
+/// One song or video by id, for a pasted YouTube link (#441). `/next` is the one call that answers
+/// with the id's own title, artists and art; the seed comes back as one of its rows.
+#[tauri::command]
+pub async fn song(state: St<'_>, video_id: String) -> Result<SongItem, String> {
+    let client = metadata_client(&state)?;
+    let next = state.it.next(client, Some(&video_id), None).await.map_err(|e| e.to_string())?;
+    next.items.into_iter().find(|i| i.video_id == video_id).ok_or_else(|| "not_found".into())
 }
 
 /// Unfiltered search → categorized sections for the search page. `record_history` as in [`search`].
@@ -82,6 +92,14 @@ pub async fn play(state: St<'_>, item: SongItem) -> Result<(), String> {
 pub async fn play_index(state: St<'_>, index: usize) -> Result<(), String> {
     let state = state.inner().clone();
     state.play_index(index).await;
+    Ok(())
+}
+
+/// The player view's Song/Video switch: the playing track's other version, same position (#442).
+#[tauri::command]
+pub async fn switch_version(state: St<'_>) -> Result<(), String> {
+    let state = state.inner().clone();
+    state.switch_version().await;
     Ok(())
 }
 
@@ -231,15 +249,15 @@ const UI_SETTINGS: [&str; 24] = [
     "disabled_stream_clients",
     "close_to_tray",
     "track_notifications",
+    "track_notifications_focused",
     "autostart",
     "start_minimized",
     "autoplay",
     "hide_videos",
     "prevent_duplicates",
-    "update_banner",
-    "update_channel",
     "lyrics_providers",
     "music_videos",
+    "videos_first",
     "ambient_light",
     "sticky_shuffle",
     "shuffle_whole_queue",
@@ -249,7 +267,7 @@ const UI_SETTINGS: [&str; 24] = [
     "locale",
 ];
 
-/// Resolve the music video for `video_id` and hand back a `limusicvideo://` URL the player view
+/// Resolve the music video for `video_id` and hand back a `mithenmusicvideo://` URL the player view
 /// can put in a `<video src>`. `None` when YouTube has no usable video stream for it, which is the
 /// ordinary answer for a song and leaves the artwork in place. The real googlevideo URL never
 /// leaves Rust (context/11).
@@ -350,6 +368,12 @@ fn native_chrome(db: &crate::db::Db) -> &'static str {
     }
 }
 
+/// GTK's `gtk-decoration-layout` (`menu:close`, `:minimize,maximize,close`), read once on the main
+/// thread in `setup`. Linux only: the titlebar draws minimize and maximize only when it names
+/// them, as GTK's own headerbars do (#481). Tiling compositors (Hyprland, sway, niri) ignore
+/// minimize and often drop maximize, and their unconfigured layout is `menu:close`.
+pub static BUTTON_LAYOUT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 #[tauri::command]
 pub async fn get_settings(state: St<'_>) -> Result<serde_json::Value, String> {
     let mut map: serde_json::Map<String, serde_json::Value> = state
@@ -360,7 +384,14 @@ pub async fn get_settings(state: St<'_>) -> Result<serde_json::Value, String> {
         .map(|(k, v)| (k, serde_json::Value::String(v)))
         .collect();
     map.insert("native_chrome".into(), native_chrome(&state.db).into());
+    // Windows 11 rounds an undecorated window with a shadow (our main window) by itself, so the
+    // SPA's own rounding would leave transparent slivers inside DWM's curve (#504). Windows 10
+    // rounds nothing, and square is its native corner anyway.
+    map.insert("os_corners".into(), cfg!(target_os = "windows").to_string().into());
     map.insert("native_video".into(), crate::state::native_video().to_string().into());
+    if let Some(layout) = BUTTON_LAYOUT.get() {
+        map.insert("button_layout".into(), layout.clone().into());
+    }
     Ok(serde_json::Value::Object(map))
 }
 
@@ -399,6 +430,10 @@ pub async fn set_setting(
     // A music video track already playing gets its picture now rather than from the next track.
     if key == "music_videos" && value == "true" {
         state.inner().attach_current_video().await;
+    }
+    // And the rest of the queue moves to the version the settings now pick.
+    if key == "music_videos" || key == "videos_first" {
+        state.inner().apply_version_preference().await;
     }
     #[cfg(target_os = "linux")]
     if key == "ambient_light" {
@@ -754,6 +789,19 @@ pub async fn get_home_more(state: St<'_>, token: String) -> Result<HomePage, Str
     state.it.home_continuation(client, &token).await.map_err(|e| e.to_string())
 }
 
+/// Whether YouTube Music answers at all, for the UI's offline retries (#483): it asks this until
+/// the answer is yes and only then reloads the page, so a dead connection doesn't flash skeletons
+/// on every try. Any status counts, only getting no reply means the network is still down.
+#[tauri::command]
+pub async fn network_reachable() -> bool {
+    crate::http::client()
+        .head("https://music.youtube.com/")
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .is_ok()
+}
+
 #[tauri::command]
 pub async fn get_library(state: St<'_>) -> Result<Vec<BrowseItem>, String> {
     let client = metadata_client(&state)?;
@@ -876,6 +924,7 @@ pub async fn get_playlist(
             owned: false, // nothing to rename or delete; it rebuilds itself from what you play
             collaborative: false,
             sort_menu: None, // built from local history, so YouTube has no order to give
+            suggestions: None,
         });
     }
     if is_local_playlist(&id) {
@@ -903,12 +952,19 @@ pub async fn set_playlist_sort(
     state.it.playlist_set_sort(client, &playlist_id, sort).await.map_err(|e| e.to_string())
 }
 
-/// videoId → how many times it was played, over the same trailing window On Repeat is built from
-/// (the history table is pruned to it, so there is no older data to offer). Feeds the playlist
-/// page's "Most played" sort; a track the map doesn't mention has not been played this month.
+/// videoId → how many times it was ever played. Feeds the "Your plays" track column and the
+/// playlist page's "Most played" sort, which share it so the sort and the numbers beside it agree;
+/// a track the map doesn't mention has never been played.
 #[tauri::command]
 pub fn play_counts(state: St<'_>) -> std::collections::HashMap<String, i64> {
-    state.db.play_counts(now_secs() - ON_REPEAT_WINDOW_SECS).into_iter().collect()
+    state.db.play_counts(0).into_iter().collect()
+}
+
+/// Home's Familiar Artists and the community shelf's seed (#497): the `limit` most played artists
+/// of all time, on the stats page's counts.
+#[tauri::command]
+pub fn top_artists(state: St<'_>, limit: usize) -> Vec<crate::stats::TopArtist> {
+    crate::stats::top_artists(state.db.listened_songs(0, now_secs()), limit)
 }
 
 /// The On Repeat track list: most-played first, over the trailing window. Rows whose stored JSON
@@ -938,7 +994,8 @@ fn shed_queue_context(s: SongItem) -> SongItem {
         autoplay: false,
         set_video_id: None,
         added_by: None,
-        added_by_avatar: None,
+        added_by_avatars: Vec::new(),
+        added_at: None,
         ..s
     }
 }
@@ -959,6 +1016,22 @@ pub async fn get_playlist_more(
     state.it.playlist_continuation(client, &token).await.map_err(|e| e.to_string())
 }
 
+/// A batch of suggestions for a playlist you own (#395). `token` is the page's `suggestions`, the
+/// previous batch's `refresh`, or nothing (see `InnerTube::playlist_suggestions`).
+#[tauri::command]
+pub async fn get_playlist_suggestions(
+    state: St<'_>,
+    playlist_id: String,
+    token: Option<String>,
+) -> Result<PlaylistSuggestions, String> {
+    let client = metadata_client(&state)?;
+    state
+        .it
+        .playlist_suggestions(client, &playlist_id, token.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// An album page. `id` is the album browseId (`MPRE…`).
 #[tauri::command]
 pub async fn get_album(state: St<'_>, id: String) -> Result<AlbumPage, String> {
@@ -972,7 +1045,15 @@ pub async fn get_album(state: St<'_>, id: String) -> Result<AlbumPage, String> {
         return Ok(crate::local::artist_page(&state.db, name));
     }
     let client = metadata_client(&state)?;
-    state.it.album(client, &id).await.map_err(|e| e.to_string())
+    let mut page = state.it.album(client, &id).await.map_err(|e| e.to_string())?;
+    // `album()` hands back the album audio for rows YouTube linked to a music video. With music
+    // videos on, those rows play the video, as on YouTube Music, with the song a switch away (#442),
+    // unless `videos_first` is off: some videos carry intros and extra scenes the song doesn't (#464).
+    let video = crate::state::wants_video(&state.db);
+    for item in &mut page.items {
+        crate::state::prefer_version(item, video);
+    }
+    Ok(page)
 }
 
 /// An artist page. `id` is the channel browseId (`UC…`).
@@ -980,6 +1061,18 @@ pub async fn get_album(state: St<'_>, id: String) -> Result<AlbumPage, String> {
 pub async fn get_artist(state: St<'_>, id: String) -> Result<ArtistPage, String> {
     let client = metadata_client(&state)?;
     state.it.artist(client, &id).await.map_err(|e| e.to_string())
+}
+
+/// The artist page's "Appears on" shelf (#456). `songs_id` is the page's `topSongsId`. Its own
+/// call so the page paints without waiting on the second browse it costs.
+#[tauri::command]
+pub async fn get_artist_appears_on(
+    state: St<'_>,
+    id: String,
+    songs_id: String,
+) -> Result<Vec<BrowseItem>, String> {
+    let client = metadata_client(&state)?;
+    state.it.artist_appears_on(client, &id, &songs_id).await.map_err(|e| e.to_string())
 }
 
 /// Moods & Genres, the tiles the search page opens on.
@@ -1608,9 +1701,9 @@ fn local_playlist_page(state: &Arc<AppState>, id: &str) -> Result<PlaylistPage, 
         .db
         .local_playlist_tracks(key)
         .into_iter()
-        .filter_map(|(row, json)| {
+        .filter_map(|(row, json, added_at)| {
             let song: SongItem = serde_json::from_str(&json).ok()?;
-            Some(SongItem { set_video_id: Some(row.to_string()), ..song })
+            Some(SongItem { set_video_id: Some(row.to_string()), added_at: Some(added_at), ..song })
         })
         .collect();
     Ok(PlaylistPage {
@@ -1625,6 +1718,7 @@ fn local_playlist_page(state: &Arc<AppState>, id: &str) -> Result<PlaylistPage, 
         owned: true,
         collaborative: false,
         sort_menu: None, // no server to keep an order, so every sort is done on the page
+        suggestions: None, // YouTube suggests only for its own playlists
     })
 }
 
@@ -2068,10 +2162,16 @@ pub fn track_info(state: St<'_>, video_id: String) -> TrackInfo {
     }
 }
 
+/// Real quit from the UI (Ctrl+Q / Cmd+Q). Positions are saved by the Exit handler in lib.rs.
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 // --- Diagnostics ----------------------------------------------------------------------------
 
 /// The bug-report blob for Settings ▸ About: environment header plus the redacted tail of
-/// `limusic.log`. See `crate::diagnostics`.
+/// `mithenmusic.log`. See `crate::diagnostics`.
 #[tauri::command]
 pub fn diagnostics(app: tauri::AppHandle, state: St<'_>) -> String {
     crate::diagnostics::report(&app, &state.db)
@@ -2118,15 +2218,31 @@ pub fn log_ui(level: String, message: String) {
 /// So: restore from the real placement, go fullscreen, then put the window on the monitor rect
 /// with SWP_FRAMECHANGED to force one recalculation with the fullscreen flag set. On the main
 /// thread, where the window messages run inline and the order is guaranteed.
+///
+/// A window that was fullscreen already when theater opened (macOS's green button, a window
+/// manager's shortcut) is left alone both ways, so closing theater doesn't drop the user out of a
+/// fullscreen they chose (#485).
 #[tauri::command]
 pub fn theater_fullscreen(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static WAS_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+    if on {
+        let already = window.is_fullscreen().unwrap_or(false);
+        WAS_FULLSCREEN.store(already, Ordering::Relaxed);
+        if already {
+            return Ok(());
+        }
+    } else if WAS_FULLSCREEN.swap(false, Ordering::Relaxed) {
+        return Ok(());
+    }
+
     #[cfg(not(target_os = "windows"))]
     {
         window.set_fullscreen(on).map_err(|e| e.to_string())
     }
     #[cfg(target_os = "windows")]
     {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use windows::Win32::UI::WindowsAndMessaging::{
             IsZoomed, SetWindowPos, ShowWindow, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE,
             SWP_NOZORDER, SW_MAXIMIZE, SW_RESTORE,
@@ -2185,6 +2301,21 @@ pub fn theater_fullscreen(window: tauri::WebviewWindow, on: bool) -> Result<(), 
             })
             .map_err(|e| e.to_string())
     }
+}
+
+#[tauri::command]
+pub fn get_matugen_theme(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    crate::matugen::read(&app)
+}
+
+#[tauri::command]
+pub fn start_matugen_watcher(app: tauri::AppHandle) -> Result<(), String> {
+    crate::matugen::start(app)
+}
+
+#[tauri::command]
+pub fn stop_matugen_watcher() {
+    crate::matugen::stop();
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //! `mithenmusic.log` with the secrets taken out.
 //!
 //! A report used to cost a round of questions (version, distro, how they installed it) and then
-//! walking someone to `~/.local/share/limusic/mithenmusic.log` by hand. This is that conversation,
+//! walking someone to `~/.local/share/mithenmusic/mithenmusic.log` by hand. This is that conversation,
 //! precomputed, behind one button in Settings ▸ About.
 //!
 //! Redaction is the part that is not allowed to be lazy. The blob is written to be pasted into a
@@ -137,11 +137,12 @@ fn header(app: &AppHandle, db: &Db) -> String {
     let disabled = db.get_setting("disabled_stream_clients").unwrap_or_default();
     let _ = writeln!(
         out,
-        "Signed in: {} | Proxy: {} | Quality: {} | Normalize: {} | Music videos: {} | Disabled clients: {}",
+        "Signed in: {} | Proxy: {} | Quality: {} | Normalize: {} | Crossfade: {} | Music videos: {} | Disabled clients: {}",
         yes_no(db.get_setting("session_cookie").is_some_and(|c| !c.is_empty())),
         yes_no(db.get_setting("proxy").is_some_and(|p| !p.is_empty())),
         db.get_setting("quality").unwrap_or_else(|| "HIGH".into()),
         yes_no(db.get_setting("normalize_volume").as_deref() != Some("false")),
+        crate::state::saved_crossfade(db).map_or_else(|| "off".into(), |s| format!("{s}s")),
         yes_no(db.get_setting("music_videos").as_deref() == Some("true")),
         if disabled.is_empty() { "none".into() } else { disabled },
     );
@@ -312,13 +313,13 @@ mod tests {
         let saved = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/home/diag-user-7q");
         let out =
-            redact("Env: RUST_LOG=info, APPIMAGE=/home/diag-user-7q/Downloads/limusic.AppImage\n");
+            redact("Env: RUST_LOG=info, APPIMAGE=/home/diag-user-7q/Downloads/mithenmusic.AppImage\n");
         match saved {
             Some(home) => std::env::set_var("HOME", home),
             None => std::env::remove_var("HOME"),
         }
         assert!(!out.contains("diag-user-7q"), "username survived redaction:\n{out}");
-        assert!(out.contains("Env: RUST_LOG=info, APPIMAGE=~/Downloads/limusic.AppImage"), "{out}");
+        assert!(out.contains("Env: RUST_LOG=info, APPIMAGE=~/Downloads/mithenmusic.AppImage"), "{out}");
     }
 
     #[test]
@@ -327,7 +328,7 @@ mod tests {
             "MithenMusic 0.7.3 (linux x86_64, AppImage)\n",
             "System: Fedora Linux 44 (KDE Plasma), kernel 7.1.8-200.fc44.x86_64, wayland session on KDE\n",
             "WebKitGTK: 2.50.6, NVIDIA: yes\n",
-            "Signed in: yes | Proxy: no | Quality: HIGH | Normalize: yes | Music videos: yes | Disabled clients: none\n",
+            "Signed in: yes | Proxy: no | Quality: HIGH | Normalize: yes | Crossfade: 5s | Music videos: yes | Disabled clients: none\n",
         );
         let out = redact(header);
         for kept in [
@@ -337,6 +338,7 @@ mod tests {
             "WebKitGTK: 2.50.6",
             "Quality: HIGH",
             "Normalize: yes",
+            "Crossfade: 5s",
             "Disabled clients: none",
         ] {
             assert!(out.contains(kept), "{kept} lost to redaction:\n{out}");
@@ -350,7 +352,7 @@ mod tests {
 
     #[test]
     fn tail_keeps_the_end_and_never_splits_a_line() {
-        let dir = std::env::temp_dir().join("limusic-diag-test");
+        let dir = std::env::temp_dir().join("mithenmusic-diag-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.log");
         std::fs::write(&path, "first line\nsecond line\nthird line\n").unwrap();

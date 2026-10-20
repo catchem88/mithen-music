@@ -510,7 +510,7 @@ fn albums_of(tracks: &[LocalTrack]) -> Vec<BrowseItem> {
 /// ponytail: splits on ";" and the feat. markers only. "," and "&" are left alone on purpose —
 /// they sit inside real names ("Tyler, The Creator", "Earth, Wind & Fire") often enough that
 /// splitting on them invents worse artists than it merges.
-fn primary_artist(artist: &str) -> &str {
+pub(crate) fn primary_artist(artist: &str) -> &str {
     let mut cut = artist.find(';').unwrap_or(artist.len());
     let lower = artist.to_lowercase();
     for marker in [" feat.", " feat ", " ft.", " ft ", " featuring "] {
@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn a_file_with_no_album_never_borrows_artwork() {
-        let dir = std::env::temp_dir().join("limusic-cover-test");
+        let dir = std::env::temp_dir().join("mithenmusic-cover-test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("cover.jpg"), b"not really a jpeg").unwrap();
         let covers = dir.join("covers");
@@ -942,7 +942,7 @@ mod tests {
     #[test]
     fn a_scan_reports_what_left_the_disk() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-        let dir = std::env::temp_dir().join("limusic-local-scan-test");
+        let dir = std::env::temp_dir().join("mithenmusic-local-scan-test");
         std::fs::create_dir_all(&dir).unwrap();
         add_folder(&db, dir.to_string_lossy().to_string());
         // Two tracks the library "knows" about; neither file exists any more.

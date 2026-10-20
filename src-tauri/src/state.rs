@@ -37,6 +37,18 @@ pub fn is_local_playlist(id: &str) -> bool {
     id.starts_with(LOCAL_PLAYLIST_PREFIX)
 }
 
+/// One play as it is being heard. See `AppState::hear`.
+#[derive(Default)]
+struct Listen {
+    /// Its `listens` row, from the moment it counts as a play (the latch in `on_position`).
+    row: Option<i64>,
+    /// Seconds actually heard, and how many of them the row has.
+    heard: f64,
+    saved: f64,
+    /// The previous position tick, which the next one is measured against.
+    last_pos: Option<f64>,
+}
+
 pub struct AppState {
     pub it: InnerTube,
     pub clients: Clients,
@@ -68,6 +80,8 @@ pub struct AppState {
     /// stalled the event pump behind `emit_queue`, `persist_queue`, `prime_lookahead` and the
     /// Listen Together broadcasts for nothing.
     history_pinged: AtomicBool,
+    /// The play being heard right now, for the listening stats (#396). See [`Self::hear`].
+    listen: std::sync::Mutex<Listen>,
     /// Mirror of mpv's pause flag (set in `media_set_playing`). Position ticks must consult this
     /// instead of assuming "playing" — mpv fires `time-pos` on seeks while paused too.
     is_playing: AtomicBool,
@@ -256,7 +270,7 @@ pub(crate) fn persisted_data_sync_id(db: &Db) -> Option<String> {
 
 fn identity_selection_key(data_sync_id: &str) -> String {
     let mut hasher = DefaultHasher::new();
-    "limusic-account-identity-v1".hash(&mut hasher);
+    "mithenmusic-account-identity-v1".hash(&mut hasher);
     data_sync_id.hash(&mut hasher);
     format!("identity-{:016x}", hasher.finish())
 }
@@ -463,6 +477,7 @@ impl AppState {
             queue: Mutex::new(QueueState::default()),
             auth: tokio::sync::Mutex::default(),
             history_pinged: AtomicBool::new(false),
+            listen: std::sync::Mutex::default(),
             is_playing: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             rate_epoch: AtomicU64::new(0),
@@ -1071,6 +1086,9 @@ impl AppState {
         }
     }
 
+    /// A sign-in, sign-out, account or channel switch, or a heal that re-minted the session: the
+    /// comments' tokens belong to who was signed in before, so none of them may be used again.
+
     /// Drop the live session back to guest, leaving the saved rows alone.
     fn clear_session(&self) {
         self.it.set_cookie(None);
@@ -1361,8 +1379,9 @@ impl AppState {
                         q.items.iter_mut().find(|i| i.video_id == item.video_id)
                     {
                         // Search and home cards carry no album name; the radio's own row for the
-                        // same track does (#309).
+                        // same track does (#309). Nor its video twin, signed in (#442).
                         have.album = have.album.take().or(item.album);
+                        have.counterpart = have.counterpart.take().or(item.counterpart);
                     }
                 }
                 // The seed is already playing and Last.fm, Discord and the OS media widget were
@@ -1768,6 +1787,80 @@ impl AppState {
         }
     }
 
+    /// The Song/Video switch (#442): play the current track's other version, from where it is. The
+    /// row trades its id for its `counterpart` and keeps the old one there, so the switch goes back
+    /// the same way. The reload is the failed-track retry's (`on_track_failed`).
+    pub async fn switch_version(self: &std::sync::Arc<Self>) {
+        {
+            let mut q = self.queue.lock().await;
+            let cur = q.current;
+            let pos = self.current_position();
+            // `q.duration` doubles as the proof mpv is on this file, as in `on_track_failed`.
+            let resume = q.duration > 0.0 && pos > 1.0 && pos < q.duration;
+            let Some(item) = q.items.get_mut(cur) else { return };
+            let old = item.video_id.clone();
+            if !swap_version(item) {
+                return;
+            }
+            // A video's cut runs its own length; `backfill_metadata` reads it off `/player`.
+            item.duration = None;
+            if resume {
+                *self.pending_seek.lock().unwrap() = Some((item.video_id.clone(), pos));
+            }
+            // Un-shuffling rebuilds the queue from this copy, which would bring the old one back.
+            if let Some(orig) = q.shuffle_orig.as_mut() {
+                if let Some(o) = orig.iter_mut().find(|i| i.video_id == old) {
+                    swap_version(o);
+                }
+            }
+            q.lookahead_loaded = None;
+        }
+        let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.start_current(gen).await {
+            self.prime_lookahead(gen).await;
+        }
+    }
+
+    /// The music video settings changed: move the queue's rows onto the version they now pick, so
+    /// the next song follows the switch, not the setting its album was opened under (#464). The
+    /// playing row is left alone, it has its own Song/Video switch.
+    pub async fn apply_version_preference(self: &std::sync::Arc<Self>) {
+        let video = wants_video(&self.db);
+        let stale_lookahead = {
+            let mut q = self.queue.lock().await;
+            let q = &mut *q;
+            let cur = q.current;
+            let primed_id = |q: &QueueState| {
+                q.lookahead_loaded.and_then(|i| q.items.get(i)).map(|i| i.video_id.clone())
+            };
+            let primed = primed_id(q);
+            let playing = q.items.get(cur).map(|i| i.video_id.clone());
+            let mut changed = false;
+            for (i, item) in q.items.iter_mut().enumerate() {
+                changed |= i != cur && prefer_version(item, video);
+            }
+            // Un-shuffling rebuilds the queue from this copy, which would bring the old ones back.
+            for item in q.shuffle_orig.iter_mut().flatten() {
+                changed |= Some(&item.video_id) != playing.as_ref() && prefer_version(item, video);
+            }
+            if !changed {
+                return;
+            }
+            // mpv holds the old version as the gapless next.
+            let stale = primed.is_some() && primed != primed_id(q);
+            if stale {
+                q.lookahead_loaded = None;
+                let _ = self.player.clear_playlist();
+            }
+            stale
+        };
+        self.emit_queue().await;
+        self.persist_queue().await;
+        if stale_lookahead {
+            self.prime_lookahead(self.generation.load(Ordering::SeqCst)).await;
+        }
+    }
+
     /// Advance the queue after a track ended (EOF) or died (load error). Don't assume mpv
     /// gaplessly transitioned — ask it: if a lookahead was primed mpv is already playing the
     /// next entry (just sync pointer + UI); if mpv went idle (lookahead absent/failed, or the
@@ -1854,6 +1947,7 @@ impl AppState {
             q.playback_ping = q.lookahead_playback_ping.take();
             q.cpn = innertube::generate_cpn();
             self.history_pinged.store(false, Ordering::Relaxed);
+            self.end_listen();
             q.duration = 0.0;
         }
         if let Some(item) = self.current_item().await {
@@ -2103,6 +2197,7 @@ impl AppState {
             q.playback_ping = data.playback_ping.clone();
             q.cpn = innertube::generate_cpn();
             self.history_pinged.store(false, Ordering::Relaxed);
+            self.end_listen();
             q.duration = 0.0;
             let cur = q.current;
             if let Some(qi) = q.items.get_mut(cur) {
@@ -2316,7 +2411,8 @@ impl AppState {
             "now": item.as_ref().map(|i| Self::now_playing_json(i, "current")),
             "paused": !self.is_playing.load(Ordering::Relaxed),
             "position": self.current_position(),
-            "duration": duration,
+            // 0 until mpv loads the file, which a restored track waits for until play (#502).
+            "duration": if duration > 0.0 { duration } else { item.as_ref().map_or(0.0, row_secs) },
             "volume": saved_volume(&self.db),
         })
     }
@@ -2403,7 +2499,13 @@ impl AppState {
         if stream_client != "restored"
             && self.db.get_setting("track_notifications").as_deref() == Some("true")
         {
-            crate::notify::track_changed(&self.app, &item.title, &item.artists);
+            // A gapless advance or a Listen Together host's change started on its own, so with the
+            // opt-in it notifies even with MithenMusic in front (#94). Ceiling: the rare non-primed
+            // advance at track end comes through `start_current` like a user's pick, and stays
+            // background-only.
+            let even_focused = matches!(stream_client, "gapless" | "listen-together")
+                && self.db.get_setting("track_notifications_focused").as_deref() == Some("true");
+            crate::notify::track_changed(&self.app, &item.title, &item.artists, even_focused);
         }
         // New track ⇒ let the next position tick through immediately instead of waiting out the
         // ~1s throttle, so a restored seek position (and the play-state self-heal) lands at once.
@@ -2620,6 +2722,7 @@ impl AppState {
     /// gated on the `enable_history` setting + being logged in. Best-effort (errors logged).
     pub async fn on_position(&self, pos: f64) {
         self.record_position(pos);
+        self.hear(pos);
         // Latched: nothing below can fire again for this play, so don't queue up behind the
         // queue mutex on every tick just to be told so. See `AppState::history_pinged`.
         if self.history_pinged.load(Ordering::Relaxed) {
@@ -2640,19 +2743,19 @@ impl AppState {
         };
         let Some((ping, cpn, played)) = crossed else { return };
 
-        // Local play count, on the same threshold. Gated on `enable_history`: with History off,
-        // play-count tracking (and the On Repeat list built from it) is paused too.
+        // Local play count (On Repeat, the stats page), on the same threshold. Deliberately not
+        // gated on `enable_history` or sign-in: that setting is about registering plays with
+        // YouTube, while this never leaves the machine and has to work signed out. Local files
+        // count too; On Repeat leaves them out when it reads.
         // ponytail: resuming a restored track from past the threshold counts it a second time (the
-        // watch-history ping has always done the same). One extra count per launch, for one song,
-        // against a month of plays. If it ever skews the list, pass the `pending_seek` offset into
-        // the latch and skip the record when the play didn't start near zero.
-        // Local files don't count: On Repeat is the only thing built from this table, and it's a
-        // YouTube Music playlist — a row pointing at a path on this disk doesn't belong in it.
-        if self.history_enabled() {
-            if let Some(item) = played.filter(|i| !crate::local::is_local_song(&i.video_id)) {
-                if let Ok(json) = serde_json::to_string(&item) {
-                    self.db.record_play(&item.video_id, &json, now_secs(), ON_REPEAT_WINDOW_SECS);
-                }
+        // watch-history ping has always done the same). One extra count per launch, for one song.
+        // If it ever skews the stats, pass the `pending_seek` offset into the latch and skip the
+        // record when the play didn't start near zero.
+        if let Some(item) = played {
+            if let Ok(json) = serde_json::to_string(&item) {
+                let mut l = self.listen.lock().unwrap();
+                l.row = self.db.record_listen(&item.video_id, &json, now_secs(), l.heard as i64);
+                l.saved = l.heard;
             }
         }
 
@@ -2953,6 +3056,9 @@ impl AppState {
         let pos = self.db.get_setting("queue_position").and_then(|s| s.parse::<f64>().ok());
         if let Some(p) = pos.filter(|p| *p > 0.0) {
             *self.pending_seek.lock().unwrap() = Some((items[current].video_id.clone(), p));
+            // Also what the seekbar shows, and what an exit before the first play saves back.
+            // Left at 0, quitting without pressing play overwrote the saved position (#502).
+            self.latest_position.store(p.to_bits(), Ordering::SeqCst);
         }
         {
             let mut q = self.queue.lock().await;
@@ -2979,6 +3085,12 @@ impl AppState {
             // has never been seen here (issue #93).
             self.refresh_rating(&item.video_id, self.generation.load(Ordering::SeqCst));
             let _ = self.app.emit("playback-state", "paused");
+            // mpv has nothing loaded until play, so it reports neither: the bar gets the saved
+            // position and the row's own length from here.
+            let _ = self
+                .app
+                .emit("position", serde_json::json!({ "position": self.current_position() }));
+            let _ = self.app.emit("duration", serde_json::json!({ "duration": row_secs(&item) }));
         }
         self.emit_queue().await;
     }
@@ -3021,10 +3133,45 @@ impl AppState {
         }
     }
 
-    /// Flush the latest known position to the DB immediately (e.g. on pause).
+    /// Flush the latest known position to the DB immediately (e.g. on pause), and the time heard
+    /// of the play it belongs to.
     pub fn flush_position(&self) {
         let pos = f64::from_bits(self.latest_position.load(Ordering::SeqCst));
         self.db.set_setting("queue_position", &pos.to_string());
+        self.save_listen(&mut self.listen.lock().unwrap());
+    }
+
+    /// Credit the time since the last position tick to the play being heard (#396). mpv ticks
+    /// several times a second while audio plays, so any other move is not listening: a jump back
+    /// (a seek, the next file starting), a jump forward of seconds (a seek), or a tick while paused
+    /// (a seek while paused). Written to the play's row every 30 s heard, so a crash loses at most
+    /// that; pause and exit write it at once (`flush_position`).
+    fn hear(&self, pos: f64) {
+        let mut l = self.listen.lock().unwrap();
+        if let Some(last) = l.last_pos {
+            let step = pos - last;
+            if step > 0.0 && step < 2.0 && self.is_playing.load(Ordering::Relaxed) {
+                l.heard += step;
+            }
+        }
+        l.last_pos = Some(pos);
+        if l.heard - l.saved >= 30.0 {
+            self.save_listen(&mut l);
+        }
+    }
+
+    fn save_listen(&self, l: &mut Listen) {
+        if let Some(row) = l.row.filter(|_| l.heard > l.saved) {
+            self.db.set_listen_secs(row, l.heard as i64);
+            l.saved = l.heard;
+        }
+    }
+
+    /// A new track starts: settle the play before it and count this one from zero.
+    fn end_listen(&self) {
+        let mut l = self.listen.lock().unwrap();
+        self.save_listen(&mut l);
+        *l = Listen::default();
     }
 
     /// Clear both cache tiers (settings "Clear caches"): the SQLite URL cache + mpv's on-disk
@@ -3051,6 +3198,15 @@ impl AppState {
 
     /// User seek from the UI.
     pub async fn user_seek(&self, position: f64) -> Result<(), String> {
+        if self.player.is_idle() {
+            // Nothing loaded to seek, as with a track restored at launch: move where it will
+            // start instead, which an exit before play also saves (#502).
+            if let Some(item) = self.current_item().await {
+                *self.pending_seek.lock().unwrap() = Some((item.video_id, position));
+                self.latest_position.store(position.to_bits(), Ordering::SeqCst);
+            }
+            return Ok(());
+        }
         self.player.seek(position).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -3828,7 +3984,7 @@ fn cache_horizon(now: i64, duration_secs: i64) -> i64 {
 }
 
 /// Parse a `"m:ss"` / `"h:mm:ss"` duration string to ms (0 if absent/unparseable).
-fn parse_duration_ms(s: Option<&str>) -> i64 {
+pub(crate) fn parse_duration_ms(s: Option<&str>) -> i64 {
     let Some(s) = s else { return 0 };
     let parts: Vec<i64> = s.split(':').filter_map(|p| p.trim().parse().ok()).collect();
     let secs = match parts.as_slice() {
@@ -3840,12 +3996,37 @@ fn parse_duration_ms(s: Option<&str>) -> i64 {
     secs * 1000
 }
 
+/// A queue row's own length in seconds (0 when it states none).
+fn row_secs(item: &SongItem) -> f64 {
+    parse_duration_ms(item.duration.as_deref()) as f64 / 1000.0
+}
+
 fn format_duration(ms: i64) -> String {
     let total = ms / 1000;
     match total / 3600 {
         0 => format!("{}:{:02}", total / 60, total % 60),
         h => format!("{}:{:02}:{:02}", h, (total % 3600) / 60, total % 60),
     }
+}
+
+/// Trade a row's id for its `counterpart` (#442), keeping the old one as the way back. False when
+/// there is none.
+pub(crate) fn swap_version(item: &mut SongItem) -> bool {
+    let Some(other) = item.counterpart.take() else { return false };
+    item.counterpart = Some(std::mem::replace(&mut item.video_id, other));
+    item.is_video = !item.is_video;
+    true
+}
+
+/// Whether a row YouTube pairs with its other version should play the music video (#464).
+pub(crate) fn wants_video(db: &Db) -> bool {
+    db.get_setting("music_videos").as_deref() == Some("true")
+        && db.get_setting("videos_first").as_deref() != Some("false")
+}
+
+/// Put a row on the version [`wants_video`] picked. False when it is already there or has no other.
+pub(crate) fn prefer_version(item: &mut SongItem, video: bool) -> bool {
+    item.is_video != video && swap_version(item)
 }
 
 /// Fill a missing item duration from the player response's `lengthSeconds` (e.g. "167") — the
@@ -4025,15 +4206,54 @@ mod tests {
     use super::{
         append_page, backfill_metadata, cache_horizon, drop_duplicates, enqueue_at,
         format_duration, get_url, guest_insert_index, history_threshold, is_mix, loudness_gain,
-        merge_radio, next_index, parse_duration_ms, persist_fingerprint, prev_track_title, put_url,
-        queue_fingerprint, radio_seed_for, retain_upcoming, shuffle_new_queue, shuffle_upcoming,
-        splice_radio_into, trim_played, unshuffled, upcoming_queued, QueueState, RepeatMode,
-        VideoUrls, KEEP_PLAYED, LOCAL_PLAYLIST_PREFIX, MAX_BOOST_DB,
+        merge_radio, next_index, parse_duration_ms, persist_fingerprint, prefer_version,
+        prev_track_title, put_url, queue_fingerprint, radio_seed_for, retain_upcoming,
+        shuffle_new_queue, shuffle_upcoming, splice_radio_into, swap_version, trim_played,
+        unshuffled, upcoming_queued, QueueState, RepeatMode, VideoUrls, KEEP_PLAYED,
+        LOCAL_PLAYLIST_PREFIX, MAX_BOOST_DB,
     };
 
     /// The whole point of the video-URL map is answering a reopen without a round trip, so a live
     /// entry has to hit and a stale one has to miss. Getting the second one wrong hands the proxy a
     /// dead googlevideo link for hours.
+    #[test]
+    fn swap_version_goes_both_ways() {
+        let mut it = innertube::SongItem {
+            video_id: "audio".into(),
+            counterpart: Some("video".into()),
+            ..Default::default()
+        };
+        assert!(swap_version(&mut it));
+        assert_eq!((it.video_id.as_str(), it.counterpart.as_deref()), ("video", Some("audio")));
+        assert!(it.is_video);
+        assert!(swap_version(&mut it));
+        assert_eq!((it.video_id.as_str(), it.counterpart.as_deref()), ("audio", Some("video")));
+        assert!(!it.is_video);
+        // Nothing to switch to: the row is left exactly as it was.
+        let mut lone = innertube::SongItem { video_id: "a".into(), ..Default::default() };
+        assert!(!swap_version(&mut lone));
+        assert_eq!(lone.video_id, "a");
+    }
+
+    #[test]
+    fn prefer_version_only_moves_rows_off_the_wanted_side() {
+        let mut it = innertube::SongItem {
+            video_id: "audio".into(),
+            counterpart: Some("video".into()),
+            ..Default::default()
+        };
+        assert!(!prefer_version(&mut it, false));
+        assert!(prefer_version(&mut it, true));
+        assert_eq!(it.video_id, "video");
+        assert!(!prefer_version(&mut it, true));
+        assert!(prefer_version(&mut it, false));
+        assert_eq!(it.video_id, "audio");
+        // A music video with nothing to switch to stays a video.
+        let mut lone =
+            innertube::SongItem { video_id: "v".into(), is_video: true, ..Default::default() };
+        assert!(!prefer_version(&mut lone, false));
+    }
+
     #[test]
     fn a_cached_video_url_lives_then_expires() {
         let mut map = VideoUrls::new();

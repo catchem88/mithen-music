@@ -1244,7 +1244,7 @@ async fn set_cover(state: &Arc<AppState>, playlist_id: &str, url: &str) {
     } else {
         return;
     };
-    let tmp = std::env::temp_dir().join(format!("limusic-cover-{}.{ext}", rand::random::<u32>()));
+    let tmp = std::env::temp_dir().join(format!("mithenmusic-cover-{}.{ext}", rand::random::<u32>()));
     if std::fs::write(&tmp, &bytes).is_ok() {
         if let Err(e) = crate::commands::store_cover(&state.app, state, playlist_id, &tmp) {
             tracing::warn!(error = %e, "import: cover not set");
@@ -1346,7 +1346,7 @@ async fn current_rows(
             .db
             .local_playlist_tracks(key)
             .into_iter()
-            .filter_map(|(row, json)| {
+            .filter_map(|(row, json, _)| {
                 let s: SongItem = serde_json::from_str(&json).ok()?;
                 Some((s.video_id, row.to_string()))
             })

@@ -17,7 +17,8 @@ import * as pl from './personal';
 import type { Personal } from './personal';
 import { appearance } from './theme.svelte';
 import { adoptInstalledLocale, currentLocale, pushLocaleToRust, t } from './i18n.svelte';
-import { friendlyNetError } from './neterr';
+import { friendlyNetError, isUnreachable } from './neterr';
+import { whenBackOnline } from './reconnect';
 
 export const playback = $state({
 	now: null as NowPlaying | null,
@@ -93,11 +94,16 @@ export const videoReady: Record<string, true> = $state({});
 const videoUrls = new Map<string, Promise<string | null>>();
 
 /** The picture ladder YouTube publishes, snapped up so the box is never upscaled, capped at 720
- *  because that is already more than the player view's box gets on a 1080p screen. `176` is `11rem`
- *  at the default root font size, the chrome above and below the box (see the `--vid` calc in
- *  NowPlaying.svelte). If the titlebar or the player bar changes height, this changes with it. */
+ *  because that is already more than the player view's box gets on a 1080p screen. What the window
+ *  keeps from the box's height, at the default root font size, mirrors NowPlaying.svelte's two
+ *  layouts. Original: `176` is `11rem`, the chrome above and below the box (the `--vid` calc).
+ *  New layout: `344` is the titlebar and the player bar (~110), the view's top row and padding
+ *  (80), and the title block under the picture (9.5rem, `VIDEO_SIDE`). If any of those changes
+ *  height, this does. */
 export function wantedVideoHeight() {
-	const px = (window.innerHeight - 176) * 0.85;
+	const px = appearance.classicPlayer
+		? (window.innerHeight - 176) * 0.85
+		: window.innerHeight - 344;
 	return [360, 480, 720].find((h) => h >= px) ?? 720;
 }
 
@@ -214,6 +220,10 @@ export async function loadLibrary(force = false) {
 		library.loaded = true;
 	} catch (e) {
 		if (generation === libraryGeneration) library.error = String(e);
+		// Run at startup, often before the network is up: without this the sidebar keeps only the
+		// local playlists until something else asks again (#483).
+		if (isUnreachable(String(e)))
+			whenBackOnline(() => generation === libraryGeneration && loadLibrary());
 		// The account's half failed (offline, most likely), and the playlists on this machine need
 		// no network: show them anyway rather than an empty sidebar.
 		refreshLocalPlaylists();
@@ -241,6 +251,8 @@ export async function loadLibraryExtras(force = false) {
 		library.extrasLoaded = true;
 	} catch (e) {
 		if (generation === libraryGeneration) library.extrasError = String(e);
+		if (isUnreachable(String(e)))
+			whenBackOnline(() => generation === libraryGeneration && loadLibraryExtras());
 	} finally {
 		if (generation === libraryGeneration) library.extrasLoading = false;
 	}
@@ -590,8 +602,6 @@ export async function seedOnRepeatPick() {
  * that keeps its slot comes back where it was.
  */
 export function saveHome(patch: Partial<pl.HomeLayout>) {
-	// Spread, not a fresh object: `seen` is written by the feed, not by the panel, and rebuilding
-	// `home` from the lists the panel owns used to drop it.
 	personal.home = { ...personal.home, ...patch };
 	savePersonal();
 }
@@ -601,9 +611,9 @@ export function resetHome() {
 	savePersonal();
 }
 
-/** Remember the shelves this page of the feed carried, for Edit home. See `pl.noteSections`. */
-export function noteHomeSections(titles: string[]) {
-	if (pl.noteSections(personal, titles)) savePersonal();
+/** Carry a pre-#476 arrangement over from shelf titles to kinds. See `pl.adoptKinds`. */
+export function adoptHomeKinds(sections: { title: string; kind?: string }[]) {
+	if (pl.adoptKinds(personal, sections)) savePersonal();
 }
 
 /** Called from every card click app-wide, so only persist when the id was actually on the grid. */
@@ -665,7 +675,7 @@ async function pushSaved(
 /**
  * Is this card in the library, wherever the library happens to live: saved on this machine, or on
  * the signed-in account. Albums and artists only answer once `loadLibraryExtras` has run, which is
- * why the menus kick it off when they open.
+ * why it runs with the library at startup and on sign-in, and again from a menu if that failed.
  *
  * Songs are not here: their library is Liked Music (Library ▸ Songs browses `FEmusic_liked_videos`),
  * so `isLiked` is the answer and TrackMenu uses it.
@@ -1203,6 +1213,17 @@ export function refreshView() {
 	ui.epoch++;
 }
 
+/**
+ * After a language change. The page remount alone leaves the sidebar and Library on YouTube's text
+ * in the old language ("43 itens", "Playlist automática"), since the library store outlives routes.
+ */
+export function refreshLanguage() {
+	refreshView();
+	loadLibrary(true);
+	if (library.extrasLoaded) loadLibraryExtras(true);
+	if (library.uploadAlbumsLoaded) loadUploadAlbums(true);
+}
+
 export function openChannelPicker(required = false) {
 	ui.channelPickerRequired = required;
 	ui.channelIdentities = [];
@@ -1454,7 +1475,7 @@ export function notePlaylistAdd(playlistId: string, songs: SongItem[]) {
 		...s,
 		set_video_id: undefined,
 		added_by: undefined,
-		added_by_avatar: undefined,
+		added_by_avatars: undefined,
 		autoplay: undefined,
 		queued: undefined,
 		queued_end: undefined,
@@ -1479,10 +1500,11 @@ export function initApp(mini = false): () => void {
 		api.onNowPlaying((n) => {
 			playback.now = n;
 			playback.rating = n.rating ?? 'indifferent'; // the track's real rating when known
-			// Feeds Shortcuts recency and the community shelf's artist seed. Every play lands here,
-			// gapless advances included, so it's the one hook that sees them all.
+			// Feeds Shortcuts recency. Every track start lands here, gapless advances included, so
+			// it's the one hook that sees them all. Never count plays here: skips and the track
+			// restored at launch land here too. Plays are counted in Rust, past the history
+			// threshold (#497).
 			pl.touchPick(personal, n.videoId);
-			if (n.artists) pl.noteArtist(personal, n.artistId ?? n.artists, pl.firstArtist(n.artists));
 			savePersonal();
 			// Warm the music video now rather than when the view opens: the resolve is a round trip
 			// to YouTube, and paid here it overlaps the track starting instead of the user's click.
@@ -1556,6 +1578,7 @@ export function initApp(mini = false): () => void {
 			// are still there, and the backend answers both without touching YouTube.
 			if (!mini) {
 				loadLibrary(true);
+				if (a.signedIn) loadLibraryExtras();
 				loadSavedIndex();
 			}
 			if (!a.signedIn) {
@@ -1617,6 +1640,10 @@ export function initApp(mini = false): () => void {
 				return;
 			}
 			loadLibrary();
+			// Saved albums and artists too, rather than when the first card menu opens: that menu is
+			// already on screen by the time they arrive, offering "Save to library" for albums the
+			// account already holds (#364).
+			if (a.signedIn) loadLibraryExtras();
 			// The crawl behind this is the app's only bulk request, so it runs once here (and on a
 			// sign-in), never on navigation. It settles into the background while the first page
 			// paints from the stored index. Signed out there is no crawl, and the answer is the

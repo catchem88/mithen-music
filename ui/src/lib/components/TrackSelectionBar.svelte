@@ -7,10 +7,12 @@
 		ArrowDownWideNarrowIcon,
 		PlayListAddIcon,
 		PlayListRemoveIcon,
+		RepeatIcon,
 		Cancel01Icon
 	} from '@hugeicons/core-free-icons';
 	import { Button } from './ui/button';
-	import { enqueue, openAddManyToPlaylist, ui } from '$lib/player.svelte';
+	import { enqueue, openAddManyToPlaylist, openPlayer, toast, ui } from '$lib/player.svelte';
+	import * as api from '$lib/api';
 	import type { SongItem } from '$lib/api';
 	import { t } from '$lib/i18n.svelte';
 	import type { TrackSelection } from '$lib/selection.svelte';
@@ -51,6 +53,26 @@
 		busy = true;
 		try {
 			await onRemove([...selection.songs]);
+		} finally {
+			busy = false;
+		}
+	}
+
+	// Replace the queue with just the selected rows and loop them. Repeat goes on first: a short
+	// queue with repeat off would have autoplay appending radio before the second call landed. The
+	// hand-queued tracks go too, or `play_tracks` would carry them into the loop (#369).
+	async function loop() {
+		if (blocked || !selection.count) return;
+		const items = [...selection.songs];
+		busy = true;
+		try {
+			await api.setRepeat('all');
+			await api.clearQueued();
+			await api.playPlaylist(items, 0, undefined, from);
+			openPlayer();
+			selection.exit(); // done with these rows; the player view is what matters now
+		} catch (e) {
+			toast.error(String(e));
 		} finally {
 			busy = false;
 		}

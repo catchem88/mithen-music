@@ -32,9 +32,13 @@ export interface SongItem {
 	thumbnail?: string;
 	/** Item id within a playlist — present only on playlist tracks; needed to remove them. */
 	set_video_id?: string;
-	/** Collaborative playlists only: who added this track, and their avatar. */
+	/** Collaborative playlists only: who added this track, and one avatar per person (several on a
+	 * Taste Match row more than one member shares). */
 	added_by?: string;
-	added_by_avatar?: string;
+	added_by_avatars?: string[];
+	/** When the track went into the playlist (unix seconds). Playlists on this machine only:
+	 *  YouTube sends no such date for its own. */
+	added_at?: number;
 	/** The signed-in user's rating (absent when the response didn't say — same as 'indifferent'). */
 	rating?: Rating;
 	/** "Add to library" off the row's own menu, with a token for each direction. Absent on rows
@@ -57,6 +61,9 @@ export interface SongItem {
 	explicit?: boolean;
 	/** This row links a music video rather than the audio track. */
 	is_video?: boolean;
+	/** The same song's other version (its music video, or back to the audio track), when YouTube
+	 *  paired them. What the player view's Song/Video switch plays (#442). */
+	counterpart?: string;
 	/** One of the user's own YouTube Music uploads. Set by Rust and passed straight back on play:
 	 *  only an authenticated client can stream one, and the row is where that is known. */
 	is_upload?: boolean;
@@ -157,6 +164,8 @@ export interface BrowseItem {
 
 export interface HomeSection {
 	title: string;
+	/** Which of home's known sections this is (`HOME_KINDS`), in any language. Absent otherwise. */
+	kind?: string;
 	items: BrowseItem[];
 	moreBrowseId?: string;
 	moreParams?: string;
@@ -177,7 +186,7 @@ export interface HomePage {
  * like any other playlist; the only thing the UI does differently is draw an icon cover, because
  * a playlist built from local play counts has no artwork of its own.
  */
-export const ON_REPEAT_ID = 'LIMUSIC_ON_REPEAT';
+export const ON_REPEAT_ID = 'MithenMusic_ON_REPEAT';
 
 /**
  * Liked Music's browseId. YouTube edits this one through the rating endpoint, not `edit_playlist`,
@@ -272,10 +281,18 @@ export interface PlaylistPage {
 	collaborative: boolean;
 	/** Absent on lists YouTube will not reorder: albums, its own radio mixes, On Repeat. */
 	sortMenu?: SortMenu;
+	/** YouTube's own suggestions shelf (`getPlaylistSuggestions`), on playlists you own under 100
+	 *  tracks. The rest get suggestions all the same, from the playlist's radio. */
+	suggestions?: string;
 }
 export interface PlaylistContinuation {
 	items: SongItem[];
 	continuation?: string;
+}
+/** One batch of suggestions; `refresh` swaps it for a fresh one. */
+export interface PlaylistSuggestions {
+	items: SongItem[];
+	refresh?: string;
 }
 
 export interface ArtistCarousel {
@@ -323,7 +340,10 @@ export interface AlbumPage {
 
 export interface ArtistPage {
 	name?: string;
+	/** Wide hero/banner image from the page header. */
 	thumbnail?: string;
+	/** Round channel avatar. Only channels YouTube Music doesn't treat as artists have one. */
+	avatar?: string;
 	description?: string;
 	subscribers?: string;
 	monthlyListeners?: string;
@@ -343,6 +363,8 @@ export const search = (query: string, recordHistory = false) =>
 /** Video uploads only: covers, live sets and remixes with no official release. Empty when the
  *  "hide music videos" setting is on. */
 export const searchVideos = (query: string) => invoke<SongItem[]>('search_videos', { query });
+/** One song or video by id, title and art included (a pasted YouTube link). */
+export const song = (videoId: string) => invoke<SongItem>('song', { videoId });
 /** Unfiltered search → categorized sections. */
 export const searchAll = (query: string, recordHistory = false) =>
 	invoke<SearchResults>('search_all', { query, recordHistory });
@@ -355,6 +377,8 @@ export const searchCards = (query: string, category: 'albums' | 'artists' | 'pla
 	invoke<BrowseItem[]>('search_cards', { query, category });
 export const play = (item: SongItem) => invoke<void>('play', { item });
 export const playIndex = (index: number) => invoke<void>('play_index', { index });
+/** Play the current track's `counterpart` from the same position. Resolves once it plays. */
+export const switchVersion = () => invoke<void>('switch_version');
 /** Remove an upcoming track from the queue (host/local only — guests are add-only). */
 export const removeFromQueue = (index: number) => invoke<void>('remove_from_queue', { index });
 /** Drag-to-reorder: move the upcoming queue item at `from` to index `to` (both past the playing
@@ -391,7 +415,7 @@ export const setVolume = (volume: number) => invoke<void>('set_volume', { volume
 export const setPlaybackParams = (speed: number, semitones: number) =>
 	invoke<void>('set_playback_params', { speed, semitones });
 export const getQueue = () => invoke<QueueState>('get_queue');
-/** A `limusicvideo://` URL for the track's music video, or null when there isn't one. `maxHeight`
+/** A `mithenmusicvideo://` URL for the track's music video, or null when there isn't one. `maxHeight`
  *  caps the picture at what the box on screen can actually show. The bytes are proxied through
  *  Rust; the webview never sees a googlevideo URL. */
 export const videoStream = (videoId: string, maxHeight: number) =>
@@ -429,6 +453,13 @@ export interface PlaybackSnapshot {
 }
 export const getPlayback = () => invoke<PlaybackSnapshot>('get_playback');
 
+// --- matugen theming (the CSS the user's matugen template produced) --------------------------
+export const getMatugenTheme = () => invoke<string | null>('get_matugen_theme');
+export const onMatugenThemeChanged = (cb: (css: string | null) => void): Promise<UnlistenFn> =>
+	listen<string | null>('matugen-theme-changed', (event) => cb(event.payload));
+export const startMatugenWatcher = () => invoke<void>('start_matugen_watcher');
+export const stopMatugenWatcher = () => invoke<void>('stop_matugen_watcher');
+
 // --- settings (context/11) -----------------------------------------------------------------
 export const getSettings = () => invoke<Record<string, string>>('get_settings');
 export const setSetting = (key: string, value: string) =>
@@ -465,6 +496,8 @@ export const resetGlobalHotkeys = () => invoke<HotkeyRegisterResult>('reset_glob
 
 /** Open an http(s) link in the real browser, never in the webview itself. */
 export const openExternal = (url: string) => invoke<void>('open_external', { url });
+/** Real quit (not close-to-tray). Same path as the tray's Quit item. */
+export const quitApp = () => invoke<void>('quit_app');
 
 /** Reveal a local file in Explorer, with the file selected. */
 export const revealInFolder = (path: string) => invoke<void>('reveal_in_folder', { path });
@@ -492,7 +525,7 @@ export interface TrackInfo {
  *  cache row, and reads a local file from disk. */
 export const trackInfo = (videoId: string) => invoke<TrackInfo>('track_info', { videoId });
 
-/** Environment + the redacted tail of `limusic.log`, for pasting into a bug report. */
+/** Environment + the redacted tail of `mithenmusic.log`, for pasting into a bug report. */
 export const diagnostics = () => invoke<string>('diagnostics');
 /** Just the environment block, for prefilling the GitHub bug form. */
 export const diagnosticsSummary = () => invoke<string>('diagnostics_summary');
@@ -532,6 +565,7 @@ export const setMiniCompact = (compact: boolean) => invoke<void>('set_mini_compa
 /** `params` is a `HomeChip.params` token — omit for the unfiltered feed. */
 export const getHome = (params?: string) => invoke<HomePage>('get_home', { params });
 export const getHomeMore = (token: string) => invoke<HomePage>('get_home_more', { token });
+
 /**
  * On Repeat is the app's own playlist (Rust builds it from this machine's play counts), so its
  * title and subtitle are our English rather than YouTube's, and Rust cannot translate them: the
@@ -602,6 +636,9 @@ export const setPlaylistSort = (playlistId: string, sort: ServerSort) =>
 	invoke<void>('set_playlist_sort', { playlistId, sort });
 export const getPlaylistMore = (token: string) =>
 	invoke<PlaylistContinuation>('get_playlist_more', { token });
+/** `token` is `PlaylistPage.suggestions`, the last batch's `refresh`, or nothing at all. */
+export const getPlaylistSuggestions = (playlistId: string, token?: string) =>
+	invoke<PlaylistSuggestions>('get_playlist_suggestions', { playlistId, token });
 /**
  * videoId → the ids of the playlists you own that hold it. Read straight from local SQLite, so it
  * answers instantly and is empty until `syncPlaylistIndex` has filled it in at least once.
@@ -613,11 +650,39 @@ export const playlistIndex = () => invoke<Record<string, string[]>>('playlist_in
  */
 export const syncPlaylistIndex = () => invoke<Record<string, string[]>>('sync_playlist_index');
 /**
- * videoId → times played, from the local listening history. Same trailing window On Repeat uses
- * (a month): the history table is pruned to it, so there is no older data. A videoId that isn't in
- * the map has not been played inside the window.
+ * videoId → times played, from the local listening history, over the trailing window On Repeat uses
+ * (a month). A videoId that isn't in the map has not been played inside the window.
  */
 export const getPlayCounts = () => invoke<Record<string, number>>('play_counts');
+
+/** The stats page's lists (#396): times played and seconds heard, inside the window. */
+export interface TopSong {
+	song: SongItem;
+	plays: number;
+	secs: number;
+}
+export interface TopArtist {
+	name: string;
+	/** Their channel (`UC…`) or a local artist (`LOCALARTIST:…`); null when the credit links none. */
+	id: string | null;
+	/** The cover of their most-heard song, for when there's no photo. */
+	thumbnail: string | null;
+	plays: number;
+	secs: number;
+}
+export interface TopAlbum {
+	id: string;
+	title: string;
+	artist: string;
+	thumbnail: string | null;
+	plays: number;
+	secs: number;
+}
+/** Everything the stats page shows for one window, counted on this device. */
+/** `since`: unix secs where the window starts, 0 for all time. It always ends now. */
+/** The `limit` most played artists of all time, on the stats page's counts. Home's Familiar Artists. */
+export const topArtists = (limit: number) => invoke<TopArtist[]>('top_artists', { limit });
+/** Forget every counted play. On Repeat empties with it. */
 /**
  * `start`: the clicked track index, or `null` for "just play it" (random opener under shuffle).
  * `sourceId`: the page's playlist/album playlist id — makes autoplay continue with that
@@ -645,6 +710,9 @@ export const startRadio = (kind: 'song' | 'artist' | 'album' | 'playlist', id: s
 	invoke<void>('start_radio', { kind, id, name });
 export const getAlbum = (id: string) => invoke<AlbumPage>('get_album', { id });
 export const getArtist = (id: string) => invoke<ArtistPage>('get_artist', { id });
+/** Other artists' releases this one is featured on (#456). `songsId` is the page's `topSongsId`. */
+export const getArtistAppearsOn = (id: string, songsId: string) =>
+	invoke<BrowseItem[]>('get_artist_appears_on', { id, songsId });
 /** A Moods & Genres tile. `params` browses `MOODS_CATEGORY_ID` into that mood's playlists. */
 export interface Mood {
 	title: string;
@@ -873,7 +941,7 @@ export const onQueueAppended = (cb: (q: QueueAppended) => void): Promise<Unliste
 /** Main window shown/hidden (close-to-tray, the mini player). WebKitGTK never tells the page. */
 export const onUiVisible = (cb: (v: boolean) => void): Promise<UnlistenFn> =>
 	listen<boolean>('ui-visible', (e) => cb(e.payload));
-/** `limusic-app <link>` (#348): the arguments a cold launch was given, handed over once... */
+/** `mithenmusic-app <link>` (#348): the arguments a cold launch was given, handed over once... */
 export const takeLaunchArgs = () => invoke<string[]>('take_launch_args');
 /** ...and those of a second launch while this one runs. */
 export const onOpenLink = (cb: (args: string[]) => void): Promise<UnlistenFn> =>
@@ -973,4 +1041,3 @@ export const lyricsProviders = () => invoke<LyricsProvider[]>('lyrics_providers'
  *  maximized state undone first and the frame recalculated after, in that order, on the main
  *  thread. Rust also puts the maximized state back when theater closes. */
 export const theaterFullscreen = (on: boolean) => invoke<void>('theater_fullscreen', { on });
-
