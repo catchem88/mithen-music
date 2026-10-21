@@ -61,8 +61,8 @@ export const prefs = $state({
 	nativeVideo: false,
 	/** `ambient_light`: the player view glows with the music video's colours (Ambient.svelte). */
 	ambient: false,
-	/** `enable_history`: watch-history ping + local play-count tracking. Off hides the Home
-	 *  history button and the On Repeat tile. */
+	/** `enable_history`: the watch-history ping and every local play count (both sides gate on it -
+	 *  see `AppState::on_position`). Off hides the Home history button. */
 	history: false,
 	/** `autoplay`: the queue keeps going with similar songs. Switched from the queue panel as well
 	 *  as Settings, so both read it here. */
@@ -309,7 +309,7 @@ export async function createLibraryPlaylist(title: string, local: boolean): Prom
 /**
  * Re-read the playlists on this machine into the library list, after anything that changed one
  * (its count and its artwork follow the tracks). One SQLite read, so this is cheaper and more
- * honest than patching a subtitle. They sit right after On Repeat, where `get_library` puts them.
+ * honest than patching a subtitle. They lead the list, where `get_library` puts them.
  */
 export async function refreshLocalPlaylists(): Promise<void> {
 	let local: BrowseItem[];
@@ -319,8 +319,7 @@ export async function refreshLocalPlaylists(): Promise<void> {
 		return;
 	}
 	const rest = library.items.filter((i) => !api.isLocalPlaylist(i.id));
-	const at = rest[0]?.id === api.ON_REPEAT_ID ? 1 : 0;
-	library.items = [...rest.slice(0, at), ...local, ...rest.slice(at)];
+	library.items = [...local, ...rest];
 }
 
 /** Optimistically apply an edit to a library playlist's row (sidebar + Library grid), so a rename
@@ -567,35 +566,6 @@ export function removePick(id: string) {
 	savePersonal();
 }
 
-/** How many songs On Repeat needs before it's worth a tile on the grid. */
-const ON_REPEAT_SEED_MIN = 5;
-
-/**
- * Put On Repeat on the Shortcuts grid once it has enough songs to be useful: the one tile the app
- * adds by itself. Called on every home visit; `seedPick` owns the "should this go on" decision, so
- * removing the tile is permanent no matter how many times this runs. Cheap to repeat: On Repeat is
- * built from local SQLite, so the fetch never touches the network.
- */
-export async function seedOnRepeatPick() {
-	// History off means no On Repeat tile and no play-count tracking behind it.
-	if (!prefs.history) return;
-	try {
-		const onRepeat = await api.getPlaylist(api.ON_REPEAT_ID);
-		if (onRepeat.items.length < ON_REPEAT_SEED_MIN) return;
-		const added = pl.seedPick(personal, {
-			kind: 'playlist',
-			id: api.ON_REPEAT_ID,
-			title: onRepeat.title ?? 'On Repeat',
-			// Not a track count: the tile is stored as-is, so a number here would go stale the next
-			// time the playlist re-ranks itself.
-			subtitle: 'Your most played'
-		});
-		if (added) savePersonal();
-	} catch {
-		// No tile this time; the next home visit tries again.
-	}
-}
-
 /**
  * Edit home writes through this as you go: the page behind the panel is the preview. `order` is
  * every section key the panel listed, in display order, hidden ones included, so a hidden section
@@ -712,16 +682,15 @@ export async function addToLibrary(item: BrowseItem): Promise<'saved' | 'already
 /**
  * Yours by definition, so there is no "remove from library" to offer: a playlist you made (YTM's
  * library subtitle is "<owner> • N tracks", and on your own it names you), your uploads, Liked
- * Music and the locally-built On Repeat. Everything else in the library got there by being saved,
- * and can be unsaved.
+ * Music and the playlists kept on this machine. Everything else in the library got there by being
+ * saved, and can be unsaved.
  *
  * ponytail: the owner name, because the grid browse carries no ownership flag (only a playlist's
  * own page does, via `musicEditablePlaylistDetailHeaderRenderer`). If this ever reads wrong, the
  * removal it wrongly offers is a no-op and `loadLibrary(true)` puts the row straight back.
  */
 export function ownedByUser(item: BrowseItem): boolean {
-	if (item.id === api.LIKED_MUSIC_ID || item.id === api.ON_REPEAT_ID || api.isLocalId(item.id))
-		return true;
+	if (item.id === api.LIKED_MUSIC_ID || api.isLocalId(item.id)) return true;
 	if (item.isUpload) return true;
 	// Library ▸ Artists is built from your songs, so an artist there has no write that takes it out.
 	// A subscription can be undone, and so can a save from here (a menu's save, the page's Subscribe).
@@ -1574,8 +1543,8 @@ export function initApp(mini = false): () => void {
 		api.onAuthChanged((a) => {
 			auth.account = a;
 			resetLibraryForAccount();
-			// Signing out doesn't empty the library: On Repeat and anything saved on this machine
-			// are still there, and the backend answers both without touching YouTube.
+			// Signing out doesn't empty the library: the playlists kept on this machine are still
+			// there, and the backend answers them without touching YouTube.
 			if (!mini) {
 				loadLibrary(true);
 				if (a.signedIn) loadLibraryExtras();

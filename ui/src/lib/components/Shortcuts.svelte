@@ -1,8 +1,7 @@
 <script lang="ts">
 	// The home grid the user curates (was "Quick Picks" — renamed: YouTube Music has a shelf by that
-	// name and it isn't this one). It holds what was put in it, in the order it was dragged into, plus
-	// On Repeat once that has enough songs (the only tile the app suggests, and removing it is
-	// permanent). Unlike before it renders even when empty — a section that hides itself is a section
+	// name and it isn't this one). It holds what was put in it, in the order it was dragged into.
+	// Unlike before it renders even when empty — a section that hides itself is a section
 	// nobody discovers. Logic in $lib/personal.ts.
 	//
 	// Not square cards: these were 5.5rem tiles and every label came out as "アプソリュ…" over a
@@ -24,29 +23,22 @@
 		DashboardSquare02Icon,
 		PlayIcon,
 		MusicNote01Icon,
-		UserIcon,
-		ListRestartIcon
+		UserIcon
 	} from '@hugeicons/core-free-icons';
 	import SectionHeading from './SectionHeading.svelte';
 	import ShortcutPicker from './ShortcutPicker.svelte';
-	import { ON_REPEAT_ID } from '$lib/api';
 	import type { BrowseItem } from '$lib/api';
 	import { thumb } from '$lib/thumb';
 	import { openItem, playItem } from '$lib/browse';
-	import { library, personal, placePick, prefs, removePick } from '$lib/player.svelte';
+	import { library, personal, placePick, removePick } from '$lib/player.svelte';
 	import { freshen, MAX_PICKS } from '$lib/personal';
 	import { getDragItem, isDragItem, setDragItem } from '$lib/dnd';
 	import { t } from '$lib/i18n.svelte';
 	import ItemMenu from './ItemMenu.svelte';
 
 	// Tiles are stored as a snapshot of the card, so a playlist that has gained tracks since it was
-	// pinned would keep showing the old count; `freshen` overlays the live library row (#67). The
-	// On Repeat tile is dropped while History is off.
-	const picks = $derived(
-		personal.picks
-			.map((p) => freshen(p, library.items))
-			.filter((p) => prefs.history || p.id !== ON_REPEAT_ID)
-	);
+	// pinned would keep showing the old count; `freshen` overlays the live library row (#67).
+	const picks = $derived(personal.picks.map((p) => freshen(p, library.items)));
 	let picking = $state(false);
 	// Where a drop would land: the id of the tile it goes in front of, `null` for the end of the grid,
 	// `undefined` when no drag of ours is over the section at all.
@@ -159,7 +151,6 @@
 			<div data-grid class="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2">
 				{#each picks as item (item.id)}
 					{@const round = item.kind === 'artist'}
-					{@const onRepeat = item.id === ON_REPEAT_ID}
 					<!-- group/pick, not `group`: nested unnamed groups would fire each other's hovers. -->
 					<div class="group/pick relative" data-ctx data-pick={item.id} animate:flip={{ duration: 200 }}>
 						<!-- Where the drop lands: a bar down the leading edge of the tile it goes in front of. -->
@@ -190,7 +181,7 @@
 									? 'my-2 ml-2 h-12 w-12 rounded-full'
 									: 'h-16 w-16'}"
 							>
-								{#if item.thumbnail && !failed[item.thumbnail] && !onRepeat}
+								{#if item.thumbnail && !failed[item.thumbnail]}
 									<img
 										src={thumb(item.thumbnail, 400)}
 										alt=""
@@ -200,17 +191,10 @@
 										onerror={() => (failed = { ...failed, [item.thumbnail!]: true })}
 									/>
 								{:else}
-									<div
-										class="flex h-full w-full items-center justify-center {onRepeat
-											? 'bg-primary/10 text-primary'
-											: 'text-muted-foreground/50'}"
-									>
-										<!-- altIcon/showAlt, not a third ternary: `icon` is read once at mount. -->
+									<div class="flex h-full w-full items-center justify-center text-muted-foreground/50">
 										<HugeiconsIcon
 											icon={round ? UserIcon : MusicNote01Icon}
-											altIcon={ListRestartIcon}
-											showAlt={onRepeat}
-											class={onRepeat ? 'h-7 w-7' : 'h-5 w-5'}
+											class="h-5 w-5"
 										/>
 									</div>
 								{/if}

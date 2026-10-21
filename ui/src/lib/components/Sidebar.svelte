@@ -13,7 +13,6 @@
 		Add01Icon,
 		PinIcon,
 		MusicNote01Icon,
-		ListRestartIcon,
 		ComputerIcon,
 		SquareArrowLeft01Icon,
 		SquareArrowRight01Icon,
@@ -21,7 +20,7 @@
 	} from '@hugeicons/core-free-icons';
 	import { toggleMode } from 'mode-watcher';
 	import { Button } from '$lib/components/ui/button';
-	import { ON_REPEAT_ID, isLocalPlaylist, type BrowseItem } from '$lib/api';
+	import { isLocalPlaylist, type BrowseItem } from '$lib/api';
 	import { thumb } from '$lib/thumb';
 	import PlaylistMenu from './PlaylistMenu.svelte';
 	import { library, personal, ui, openNewPlaylist, toggleSidebar } from '$lib/player.svelte';
@@ -224,7 +223,7 @@
 								? 'rounded-full'
 								: 'rounded-md'}"
 						>
-							{#if pl.thumbnail && pl.id !== ON_REPEAT_ID}
+							{#if pl.thumbnail}
 								<img
 									src={thumb(pl.thumbnail, 96)}
 									alt=""
@@ -232,19 +231,8 @@
 									loading="lazy"
 								/>
 							{:else}
-								<!-- On Repeat has no artwork by nature: icon tile, same as its card. -->
-								<div
-									class="flex h-full w-full items-center justify-center {pl.id === ON_REPEAT_ID
-										? 'bg-primary/10 text-primary'
-										: 'text-muted-foreground/50'}"
-								>
-									<!-- altIcon/showAlt, not a ternary: `icon` is read once at mount. -->
-									<HugeiconsIcon
-										icon={MusicNote01Icon}
-										altIcon={ListRestartIcon}
-										showAlt={pl.id === ON_REPEAT_ID}
-										class={pl.id === ON_REPEAT_ID ? 'h-5 w-5' : 'h-4 w-4'}
-									/>
+								<div class="flex h-full w-full items-center justify-center text-muted-foreground/50">
+									<HugeiconsIcon icon={MusicNote01Icon} class="h-4 w-4" />
 								</div>
 							{/if}
 						</div>

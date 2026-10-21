@@ -5,15 +5,14 @@ use std::sync::Arc;
 
 use innertube::{
     AlbumPage, ArtistPage, BrowseItem, HistoryGroup, HomePage, MoodSection,
-    PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, Provenance, Rating,
-    SearchResults, SearchSuggestions, SongItem, VoteState,
+    PlaylistContinuation, PlaylistPage, PlaylistSort, PlaylistSuggestions, Rating, SearchResults,
+    SearchSuggestions, SongItem,
 };
 use tauri::{Emitter, Manager, State};
 
 use crate::blocked::BlockedArtist;
 use crate::state::{
-    is_local_playlist, AppState, LOCAL_PLAYLIST_PREFIX, ON_REPEAT_ID, ON_REPEAT_LIMIT,
-    ON_REPEAT_WINDOW_SECS,
+    is_local_playlist, AppState, LOCAL_PLAYLIST_PREFIX,
 };
 
 type St<'a> = State<'a, Arc<AppState>>;
@@ -812,33 +811,10 @@ pub async fn get_library(state: St<'_>) -> Result<Vec<BrowseItem>, String> {
     } else {
         Vec::new()
     };
-    // On Repeat leads the library once there's anything in it. Hidden while empty rather than
-    // shown as a dead tile on a fresh install.
-    let songs = on_repeat_songs(&state);
-    if !songs.is_empty() {
-        items.insert(
-            0,
-            BrowseItem {
-                kind: "playlist",
-                id: ON_REPEAT_ID.into(),
-                title: "On Repeat".into(),
-                subtitle: Some(format!("{} songs", songs.len())),
-                thumbnail: None, // the UI draws an icon cover for this one
-                duration: None,
-                album_id: None,
-                artist_runs: Vec::new(),
-                play_count: None,
-                is_video: false,
-                is_upload: false,
-                explicit: false,
-            },
-        );
-    }
-    // The playlists on this machine next, signed in or not: they belong to no account.
-    let at = usize::from(items.first().is_some_and(|i| i.id == ON_REPEAT_ID));
+    // The playlists on this machine lead, signed in or not: they belong to no account.
     let local: Vec<BrowseItem> =
         state.db.local_playlists().iter().map(|p| local_playlist_card(&state, p)).collect();
-    items.splice(at..at, local);
+    items.splice(0..0, local);
     // A card has nowhere to put two images, so a custom cover simply is the artwork here.
     for item in &mut items {
         if let Some(cover) = custom_cover(&state, &item.id) {
@@ -898,8 +874,8 @@ pub async fn get_library_subscriptions(state: St<'_>) -> Result<Vec<BrowseItem>,
     state.it.library_subscriptions(client).await.map_err(|e| e.to_string())
 }
 
-/// A playlist or album page. `id` is the browseId (`VL…` / `MPRE…`); Liked Songs is `VLLM`, and
-/// `LIMUSIC_ON_REPEAT` is the local auto-playlist rather than anything YouTube knows about.
+/// A playlist or album page. `id` is the browseId (`VL…` / `MPRE…`); Liked Songs is `VLLM`, and a
+/// playlist kept on this machine is `LOCALPLAYLIST:…` rather than anything YouTube knows about.
 ///
 /// `sort` asks YouTube for the tracks in a given order; `None` gets whatever order the account
 /// already has the list in, which is what a fresh visit wants (it matches YouTube Music).
@@ -910,23 +886,6 @@ pub async fn get_playlist(
     sort: Option<PlaylistSort>,
     desc: Option<bool>,
 ) -> Result<PlaylistPage, String> {
-    if id == ON_REPEAT_ID {
-        let items = on_repeat_songs(&state);
-        return Ok(PlaylistPage {
-            title: Some("On Repeat".into()),
-            subtitle: Some(format!("{} songs you've played most this month", items.len())),
-            thumbnail: None,
-            description: None,
-            privacy: None,
-            cover: None,
-            items,
-            continuation: None,
-            owned: false, // nothing to rename or delete; it rebuilds itself from what you play
-            collaborative: false,
-            sort_menu: None, // built from local history, so YouTube has no order to give
-            suggestions: None,
-        });
-    }
     if is_local_playlist(&id) {
         return local_playlist_page(&state, &id);
     }
@@ -960,31 +919,12 @@ pub fn play_counts(state: St<'_>) -> std::collections::HashMap<String, i64> {
     state.db.play_counts(0).into_iter().collect()
 }
 
-/// Home's Familiar Artists and the community shelf's seed (#497): the `limit` most played artists
-/// of all time, on the stats page's counts.
-#[tauri::command]
-pub fn top_artists(state: St<'_>, limit: usize) -> Vec<crate::stats::TopArtist> {
-    crate::stats::top_artists(state.db.listened_songs(0, now_secs()), limit)
-}
-
-/// The On Repeat track list: most-played first, over the trailing window. Rows whose stored JSON
-/// no longer parses (a `SongItem` shape change) are dropped rather than failing the whole page.
-fn on_repeat_songs(state: &Arc<AppState>) -> Vec<SongItem> {
-    let since = now_secs() - ON_REPEAT_WINDOW_SECS;
-    state
-        .db
-        .top_plays(since, ON_REPEAT_LIMIT)
-        .into_iter()
-        .filter_map(|(json, _plays)| serde_json::from_str(&json).ok())
-        .map(shed_queue_context)
-        .collect()
-}
-
 /// A play record is the whole `SongItem` as it sat in the queue, so it carries that slot's queue
 /// metadata: `queued` when the track was "added to queue", `autoplay` when radio appended it,
 /// `set_video_id` from whatever playlist it was played from. None of that describes the song, so
-/// On Repeat sheds it: otherwise playing On Repeat drops it into "Next in queue" instead of the
-/// playlist. Strips on read so rows already stored this way are fixed too.
+/// a playlist row sheds it: otherwise playing a list built from play records would drop the track
+/// into "Next in queue" instead of the playlist. Strips on read so rows already stored this way are
+/// fixed too.
 fn shed_queue_context(s: SongItem) -> SongItem {
     SongItem {
         queued: false,
@@ -1202,16 +1142,12 @@ pub async fn set_album_saved(
     state.it.like_playlist(client, &playlist_id, saved).await.map_err(|e| e.to_string())
 }
 
-/// Login, plus the guard every playlist edit needs. Two ids never reach `edit_playlist`: On Repeat
-/// has no YouTube playlist behind it, and Liked Music is an auto-playlist YouTube edits through the
-/// rating endpoint instead. Both answer 400 there.
+/// Login, plus the guard every playlist edit needs. Liked Music never reaches `edit_playlist`: it
+/// is an auto-playlist YouTube edits through the rating endpoint instead, which answers 400 there.
 fn editable_playlist<'a>(
     state: &'a Arc<AppState>,
     playlist_id: &str,
 ) -> Result<&'a innertube::YouTubeClient, String> {
-    if playlist_id == ON_REPEAT_ID {
-        return Err("On Repeat builds itself from what you play.".into());
-    }
     if playlist_id == LIKED_MUSIC_ID {
         return Err("Liked Music follows your likes; like the song instead.".into());
     }
@@ -1279,9 +1215,6 @@ pub async fn sync_playlist_index(
     }
     let mut indexed: Vec<String> = Vec::new();
     for item in library {
-        if item.id == ON_REPEAT_ID {
-            continue;
-        }
         // One playlist failing (a deleted id, a hiccup) must not abandon the rest of the crawl,
         // and must not drop what is already indexed for it either: leaving it out of `indexed`
         // would have `retain_playlists` forget the tracks we do know about.
@@ -1563,10 +1496,10 @@ pub struct CoverResult {
 /// screen, and the upload is a three-call round trip nobody should wait through.
 ///
 /// A failure is a toast, not a rollback: the artwork is still right here, and it is still this
-/// playlist's cover on this machine. Signed out (or On Repeat, which YouTube has never heard of),
-/// there is nothing to sync and local is all there ever was.
+/// playlist's cover on this machine. Signed out (or a playlist kept on this machine, which YouTube
+/// has never heard of), there is nothing to sync and local is all there ever was.
 fn sync_cover(state: &Arc<AppState>, playlist_id: &str, path: String) {
-    if playlist_id == ON_REPEAT_ID || is_local_playlist(playlist_id) || !state.it.is_logged_in() {
+    if is_local_playlist(playlist_id) || !state.it.is_logged_in() {
         return;
     }
     let state = Arc::clone(state);
@@ -1604,7 +1537,7 @@ async fn clear_cover_on_youtube(
     state: &Arc<AppState>,
     playlist_id: &str,
 ) -> Result<Option<String>, String> {
-    if playlist_id == ON_REPEAT_ID || is_local_playlist(playlist_id) || !state.it.is_logged_in() {
+    if is_local_playlist(playlist_id) || !state.it.is_logged_in() {
         return Ok(None);
     }
     let client = metadata_client(state)?;
@@ -2323,7 +2256,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn on_repeat_rows_shed_the_queue_slot_they_were_played_from() {
+    fn played_rows_shed_the_queue_slot_they_were_played_from() {
         let played = SongItem {
             video_id: "abc".into(),
             title: "Grace".into(),

@@ -7,8 +7,7 @@
 	// The sheets are full-size siblings behind an opaque cover, scaled narrower and lifted, so only
 	// their top strips are ever visible. Transform-only, so the fan composites.
 	import { HugeiconsIcon } from '@hugeicons/svelte';
-	import { PlayIcon, MusicNote01Icon, ListRestartIcon } from '@hugeicons/core-free-icons';
-	import { ON_REPEAT_ID } from '$lib/api';
+	import { PlayIcon, MusicNote01Icon } from '@hugeicons/core-free-icons';
 	import type { BrowseItem } from '$lib/api';
 	import { thumb } from '$lib/thumb';
 	import { setDragItem } from '$lib/dnd';
@@ -18,8 +17,6 @@
 
 	let { item }: { item: BrowseItem } = $props();
 
-	const onRepeat = $derived(item.id === ON_REPEAT_ID);
-
 	let attempt = $state(0);
 	$effect(() => {
 		item.thumbnail;
@@ -28,7 +25,7 @@
 	const sized = $derived(thumb(item.thumbnail, 400));
 	const src = $derived(attempt === 0 ? sized : item.thumbnail);
 	const imgFailed = () => (attempt = attempt === 0 && sized !== item.thumbnail ? 1 : 2);
-	const hasArt = $derived(!!item.thumbnail && attempt < 2 && !onRepeat);
+	const hasArt = $derived(!!item.thumbnail && attempt < 2);
 
 	let busy = $state(false);
 	async function play() {
@@ -83,18 +80,8 @@
 						onerror={imgFailed}
 					/>
 				{:else}
-					<div
-						class="flex h-full w-full items-center justify-center {onRepeat
-							? 'bg-primary/10 text-primary'
-							: 'text-muted-foreground/50'}"
-					>
-						<!-- altIcon/showAlt, not a ternary: `icon` is read once at mount. -->
-						<HugeiconsIcon
-							icon={MusicNote01Icon}
-							altIcon={ListRestartIcon}
-							showAlt={onRepeat}
-							class={onRepeat ? 'h-10 w-10' : 'h-7 w-7'}
-						/>
+					<div class="flex h-full w-full items-center justify-center text-muted-foreground/50">
+						<HugeiconsIcon icon={MusicNote01Icon} class="h-7 w-7" />
 					</div>
 				{/if}
 				<button

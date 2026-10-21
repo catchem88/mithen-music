@@ -5,9 +5,9 @@
 import type { BrowseItem } from './api';
 
 /**
- * Grid capacity. Everything on the grid was put there by hand, with one exception: `seedPick` lets
- * the app suggest a tile (today only On Repeat, once it has enough songs to be worth one). A seeded
- * tile is never forced: it can't evict a hand-picked one, and removing it is permanent.
+ * Grid capacity. Everything on the grid was put there by hand. `seedPick` exists so the app can
+ * suggest one tile of its own; nothing calls it today (the tile it used to seed is gone), and a
+ * seeded tile was never forced: it can't evict a hand-picked one, and removing it is permanent.
  */
 export const MAX_PICKS = 18;
 export const MAX_PINS = 3;
@@ -122,14 +122,8 @@ export function hydrate(raw: unknown): Personal {
 			backdrop: flag(h.backdrop, true),
 			cards: CARD_SIZES.includes(h.cards as CardSize) ? (h.cards as CardSize) : 'medium'
 		};
-		// '@familiar' shipped after some users had already saved an arrangement, and an unranked key
-		// sorts to the bottom of the feed. Slot it where the code puts it, once.
-		const order = base.home.order;
-		if (order.length && !order.includes('@familiar')) {
-			const at = order.indexOf('@recent');
-			order.splice(at < 0 ? order.length : at + 1, 0, '@familiar');
-		}
 		// Shortcuts sat above the arrangement until it became a section of its own; it stays on top.
+		const order = base.home.order;
 		if (order.length && !order.includes('@shortcuts')) order.unshift('@shortcuts');
 	}
 	return base;
@@ -232,7 +226,7 @@ export function touchPick(p: Personal, id: string, now = Date.now()): boolean {
  * card as it looked the day it went in, so a playlist that has since gained tracks or changed cover
  * kept showing the old count right next to a library grid showing the new one (#67). The library
  * list is fetched and every add/remove patches it, so it wins wherever it holds the same id.
- * Anything the library doesn't know (On Repeat, a local album, something never saved) keeps its
+ * Anything the library doesn't know (a local album, something never saved) keeps its
  * snapshot, which is also what makes those tiles render offline.
  *
  * ponytail: library playlists and liked music, because those are what change under you. Feed it

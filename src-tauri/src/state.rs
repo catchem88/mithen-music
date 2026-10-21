@@ -19,18 +19,8 @@ use crate::db::{now_secs, Db, StoredAccount};
 use crate::media::MediaHandle;
 use crate::orchestrator::{Orchestrator, PlaybackData, PlaybackPing, ResolveError};
 
-/// Synthetic browseId for the On Repeat playlist. Not a YouTube id: `get_playlist` intercepts it
-/// and builds the page from local play counts, so it must never collide with a real browseId
-/// (`VL…` / `MPRE…` / `RD…`).
-pub const ON_REPEAT_ID: &str = "LIMUSIC_ON_REPEAT";
-/// How far back On Repeat looks. A month is long enough to survive a quiet week and short enough
-/// that the list still turns over with what you're actually playing.
-pub const ON_REPEAT_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
-/// How many songs it holds.
-pub const ON_REPEAT_LIMIT: usize = 20;
-
-/// A playlist kept on this machine (issue #251) is the browseId `LOCALPLAYLIST:<row id>`. Like On
-/// Repeat, the playlist commands intercept it and answer from SQLite, and YouTube never sees one.
+/// A playlist kept on this machine (issue #251) is the browseId `LOCALPLAYLIST:<row id>`. The
+/// playlist commands intercept it and answer from SQLite, and YouTube never sees one.
 pub const LOCAL_PLAYLIST_PREFIX: &str = "LOCALPLAYLIST:";
 
 pub fn is_local_playlist(id: &str) -> bool {
@@ -77,10 +67,11 @@ pub struct AppState {
     /// An atomic rather than a `QueueState` field because `on_position` runs on every raw mpv
     /// tick, well above the 4 Hz the UI emit is throttled to, and the flag is latched true for all
     /// but the first ~30 seconds of each track: taking the app's most contended lock to read it
-    /// stalled the event pump behind `emit_queue`, `persist_queue`, `prime_lookahead` and the
-    /// Listen Together broadcasts for nothing.
+    /// stalled the event pump behind `emit_queue`, `persist_queue` and `prime_lookahead` for
+    /// nothing.
     history_pinged: AtomicBool,
-    /// The play being heard right now, for the listening stats (#396). See [`Self::hear`].
+    /// The play being heard right now, so [`Self::save_listen`] can keep its row's time up to date
+    /// (#396). See [`Self::hear`].
     listen: std::sync::Mutex<Listen>,
     /// Mirror of mpv's pause flag (set in `media_set_playing`). Position ticks must consult this
     /// instead of assuming "playing" — mpv fires `time-pos` on seeks while paused too.
@@ -1522,12 +1513,11 @@ impl AppState {
         name: Option<String>,
     ) -> Result<(), String> {
         // Guarded here rather than in each menu: everything without a YouTube item behind it
-        // (files on disk, the locally-built On Repeat) would otherwise reach `/next` as an id
+        // (files on disk, a playlist kept on this machine) would otherwise reach `/next` as an id
         // YouTube has never heard of.
         if crate::local::is_local_song(id)
             || id.starts_with(crate::local::ALBUM_PREFIX)
             || id.starts_with(crate::local::ARTIST_PREFIX)
-            || id == ON_REPEAT_ID
             || is_local_playlist(id)
         {
             return Err("This has no radio behind it.".into());
@@ -2743,19 +2733,19 @@ impl AppState {
         };
         let Some((ping, cpn, played)) = crossed else { return };
 
-        // Local play count (On Repeat, the stats page), on the same threshold. Deliberately not
-        // gated on `enable_history` or sign-in: that setting is about registering plays with
-        // YouTube, while this never leaves the machine and has to work signed out. Local files
-        // count too; On Repeat leaves them out when it reads.
+        // Local play count, on the same threshold: what the "Your plays" track column and the
+        // playlist page's "Most played" sort read. Gated on `enable_history` like the ping below,
+        // because with History off the app is not keeping a record of what was played either.
         // ponytail: resuming a restored track from past the threshold counts it a second time (the
         // watch-history ping has always done the same). One extra count per launch, for one song.
-        // If it ever skews the stats, pass the `pending_seek` offset into the latch and skip the
-        // record when the play didn't start near zero.
-        if let Some(item) = played {
-            if let Ok(json) = serde_json::to_string(&item) {
-                let mut l = self.listen.lock().unwrap();
-                l.row = self.db.record_listen(&item.video_id, &json, now_secs(), l.heard as i64);
-                l.saved = l.heard;
+        if self.history_enabled() {
+            if let Some(item) = played {
+                if let Ok(json) = serde_json::to_string(&item) {
+                    let mut l = self.listen.lock().unwrap();
+                    l.row =
+                        self.db.record_listen(&item.video_id, &json, now_secs(), l.heard as i64);
+                    l.saved = l.heard;
+                }
             }
         }
 

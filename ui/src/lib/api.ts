@@ -42,8 +42,8 @@ export interface SongItem {
 	/** The signed-in user's rating (absent when the response didn't say — same as 'indifferent'). */
 	rating?: Rating;
 	/** "Add to library" off the row's own menu, with a token for each direction. Absent on rows
-	 *  YouTube sent no menu for, and on the ones built here (local files, On Repeat, a Listen
-	 *  Together guest's queue) — the menu hides the action rather than offering a dead one.
+	 *  YouTube sent no menu for, and on the ones built here (local files, a playlist kept on this
+	 *  machine): the menu hides the action rather than offering a dead one.
 	 *  Library ▸ Songs is not Liked Music: this is a feedback write, not a rating. */
 	library?: { in_library: boolean; add_token?: string; remove_token?: string };
 	/** Listen Together: name of the guest who added this queue item (session adds only). */
@@ -182,13 +182,6 @@ export interface HomePage {
 }
 
 /**
- * The On Repeat auto-playlist's synthetic browseId (mirrors `ON_REPEAT_ID` in state.rs). It routes
- * like any other playlist; the only thing the UI does differently is draw an icon cover, because
- * a playlist built from local play counts has no artwork of its own.
- */
-export const ON_REPEAT_ID = 'MithenMusic_ON_REPEAT';
-
-/**
  * Liked Music's browseId. YouTube edits this one through the rating endpoint, not `edit_playlist`,
  * so it is never an add/remove/rename target: liking the song is the edit.
  */
@@ -279,7 +272,7 @@ export interface PlaylistPage {
 	owned: boolean;
 	/** Collaboration is on: others can add to it, and each person may remove only what they added. */
 	collaborative: boolean;
-	/** Absent on lists YouTube will not reorder: albums, its own radio mixes, On Repeat. */
+	/** Absent on lists YouTube will not reorder: albums, its own radio mixes, a list built here. */
 	sortMenu?: SortMenu;
 	/** YouTube's own suggestions shelf (`getPlaylistSuggestions`), on playlists you own under 100
 	 *  tracks. The rest get suggestions all the same, from the playlist's radio. */
@@ -567,26 +560,13 @@ export const getHome = (params?: string) => invoke<HomePage>('get_home', { param
 export const getHomeMore = (token: string) => invoke<HomePage>('get_home_more', { token });
 
 /**
- * On Repeat is the app's own playlist (Rust builds it from this machine's play counts), so its
- * title and subtitle are our English rather than YouTube's, and Rust cannot translate them: the
- * UI language lives in the webview's localStorage and never reaches it. Relabelled here, on the
- * way in, because every surface that draws the tile reads it from one of these two calls.
+ * Rust words a playlist kept on this machine's subtitle itself ("12 songs", counted in SQLite), so
+ * it cannot translate it: the UI language lives in the webview's localStorage and never reaches the
+ * backend. Relabelled here, on the way in, because every surface that draws the card reads it from
+ * one of these calls.
  */
-const relabelOnRepeat = (item: BrowseItem): BrowseItem =>
-	item.id !== ON_REPEAT_ID
-		? item
-		: {
-				...item,
-				title: t('library.on_repeat'),
-				// The count is Rust's leading number ("20 songs"); left alone if it ever isn't.
-				subtitle: Number.isNaN(parseInt(item.subtitle ?? '', 10))
-					? item.subtitle
-					: t('library.songs_count', { count: parseInt(item.subtitle!, 10) })
-			};
-
-/** Same reason as On Repeat: Rust's "12 songs" on a playlist kept on this machine. */
 const relabelLocal = (item: BrowseItem): BrowseItem => {
-	if (!isLocalPlaylist(item.id)) return relabelOnRepeat(item);
+	if (!isLocalPlaylist(item.id)) return item;
 	const count = parseInt(item.subtitle ?? '', 10);
 	if (Number.isNaN(count)) return item;
 	return {
@@ -598,7 +578,7 @@ const relabelLocal = (item: BrowseItem): BrowseItem => {
 	};
 };
 
-/** Every playlist in the library: On Repeat, the ones on this machine, then the account's. */
+/** Every playlist in the library: the ones on this machine, then the account's. */
 export const getLibrary = () =>
 	invoke<BrowseItem[]>('get_library').then((items) => items.map(relabelLocal));
 /** Just the playlists on this machine. SQLite only, so it answers offline and signed out. */
@@ -619,15 +599,7 @@ export const getHistory = () => invoke<HistoryGroup[]>('get_history');
  * the list in, which is the one a fresh visit wants (it is what YouTube Music would show).
  */
 export const getPlaylist = (id: string, sort?: ServerSort, desc?: boolean) =>
-	invoke<PlaylistPage>('get_playlist', { id, sort, desc }).then((page) =>
-		id !== ON_REPEAT_ID
-			? page
-			: {
-					...page,
-					title: t('library.on_repeat'),
-					subtitle: t('library.on_repeat_subtitle', { count: page.items.length })
-				}
-	);
+	invoke<PlaylistPage>('get_playlist', { id, sort, desc });
 /**
  * Store a sort order on a playlist, so YouTube Music and every other client show it the same way.
  * Only for a list whose `sortMenu.editable` is true.
@@ -650,39 +622,11 @@ export const playlistIndex = () => invoke<Record<string, string[]>>('playlist_in
  */
 export const syncPlaylistIndex = () => invoke<Record<string, string[]>>('sync_playlist_index');
 /**
- * videoId → times played, from the local listening history, over the trailing window On Repeat uses
- * (a month). A videoId that isn't in the map has not been played inside the window.
+ * videoId → times played, counted on this machine (`0` counts every play ever recorded). A videoId
+ * that isn't in the map has no recorded play.
  */
 export const getPlayCounts = () => invoke<Record<string, number>>('play_counts');
 
-/** The stats page's lists (#396): times played and seconds heard, inside the window. */
-export interface TopSong {
-	song: SongItem;
-	plays: number;
-	secs: number;
-}
-export interface TopArtist {
-	name: string;
-	/** Their channel (`UC…`) or a local artist (`LOCALARTIST:…`); null when the credit links none. */
-	id: string | null;
-	/** The cover of their most-heard song, for when there's no photo. */
-	thumbnail: string | null;
-	plays: number;
-	secs: number;
-}
-export interface TopAlbum {
-	id: string;
-	title: string;
-	artist: string;
-	thumbnail: string | null;
-	plays: number;
-	secs: number;
-}
-/** Everything the stats page shows for one window, counted on this device. */
-/** `since`: unix secs where the window starts, 0 for all time. It always ends now. */
-/** The `limit` most played artists of all time, on the stats page's counts. Home's Familiar Artists. */
-export const topArtists = (limit: number) => invoke<TopArtist[]>('top_artists', { limit });
-/** Forget every counted play. On Repeat empties with it. */
 /**
  * `start`: the clicked track index, or `null` for "just play it" (random opener under shuffle).
  * `sourceId`: the page's playlist/album playlist id — makes autoplay continue with that

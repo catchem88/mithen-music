@@ -192,11 +192,13 @@ impl Db {
                 lyrics     TEXT,
                 fetched_at INTEGER NOT NULL
             );
-            -- Listening history (#396): one row per play, kept for good. Like `local_playlists`
-            -- this is the user's own data, not a cache. `secs` is how long the song was actually
-            -- heard (pauses and seeks don't count), and it keeps growing while the song plays on
-            -- (see `AppState::hear`). The song itself lives once in `listen_songs`, as the latest
-            -- `SongItem` it was played as. Stats and On Repeat are both built from these two.
+            -- Play counts: one row per play, kept for good. Like `local_playlists` this is the
+            -- user's own data, not a cache. `secs` is how long the song was actually heard (pauses
+            -- and seeks don't count), and it keeps growing while the song plays on (see
+            -- `AppState::hear`). The song itself lives once in `listen_songs`, as the latest
+            -- `SongItem` it was played as. Written only while the `enable_history` setting is on
+            -- (see `AppState::on_position`); the "Your plays" track column and the playlist page's
+            -- "Most played" sort are built from these two tables.
             CREATE TABLE IF NOT EXISTS listens (
                 id        INTEGER PRIMARY KEY,
                 video_id  TEXT NOT NULL,
@@ -314,9 +316,6 @@ impl Db {
         if info_added {
             let _ = conn.execute("DELETE FROM stream_url_cache", []);
         }
-        // Local files are no longer recorded as plays (see `AppState::on_position`), but 0.3.1
-        // recorded them for a while, so clear out anything already sitting in On Repeat's table.
-        let _ = conn.execute("DELETE FROM plays WHERE video_id LIKE 'LOCAL:%'", []);
         // Sweep dead stream URLs here as well as on write. `put_stream` only runs on a cache miss,
         // so a session spent replaying cached tracks never triggers one, and the backlog that
         // built up before anything pruned at all (1803 rows, 1772 of them expired, on a real
@@ -886,12 +885,12 @@ impl Db {
         );
     }
 
-    // --- listening history (the stats page, #396, and the On Repeat playlist) -----------------
+    // --- play counts (the "Your plays" track column, the playlist page's "Most played" sort) ----
 
     /// Count a play: the song's latest metadata into `listen_songs` and a `listens` row holding the
     /// `secs` heard so far. Returns the row, which [`Db::set_listen_secs`] keeps up to date while
-    /// the song plays on. `song_json` is the serialized `SongItem`, so the stats and On Repeat are
-    /// built without asking YouTube for metadata it already gave us.
+    /// the song plays on. `song_json` is the serialized `SongItem`, so a count needs no round trip
+    /// to YouTube for metadata it already gave us.
     pub fn record_listen(
         &self,
         video_id: &str,
@@ -918,38 +917,9 @@ impl Db {
         let _ = conn.execute("UPDATE listens SET secs = ?2 WHERE id = ?1", [id, secs]);
     }
 
-    /// "Clear listening history" on the stats page. On Repeat empties with it: same rows.
-    pub fn clear_listens(&self) {
-        let conn = self.0.lock().unwrap();
-        let _ = conn.execute_batch("DELETE FROM listens; DELETE FROM listen_songs;");
-    }
-
-    /// The most-played songs since `since`, as `(song_json, play_count)` ranked by plays and then
-    /// by recency. Local files are left out: this is On Repeat, a YouTube Music playlist, and a row
-    /// pointing at a path on this disk doesn't belong in it.
-    pub fn top_plays(&self, since: i64, limit: usize) -> Vec<(String, i64)> {
-        let conn = self.0.lock().unwrap();
-        let mut out = Vec::new();
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT s.song_json, COUNT(*) AS plays, MAX(l.played_at) AS last
-             FROM listens l JOIN listen_songs s ON s.video_id = l.video_id
-             WHERE l.played_at >= ?1 AND l.video_id NOT LIKE 'LOCAL:%'
-             GROUP BY l.video_id
-             ORDER BY plays DESC, last DESC
-             LIMIT ?2",
-        ) {
-            if let Ok(rows) = stmt
-                .query_map(rusqlite::params![since, limit as i64], |r| Ok((r.get(0)?, r.get(1)?)))
-            {
-                out.extend(rows.flatten());
-            }
-        }
-        out
-    }
-
-    /// Play count per videoId since `since`. [`Db::top_plays`] answers "what are my 20 most played
-    /// songs"; this answers "how many times have I played each of these", which is what sorting an
-    /// arbitrary playlist by plays needs.
+    /// Play count per videoId since `since`: how many times each track was played, which is what
+    /// the "Your plays" track column shows and what sorting a playlist by plays needs. `0` counts
+    /// every play ever recorded.
     pub fn play_counts(&self, since: i64) -> Vec<(String, i64)> {
         let conn = self.0.lock().unwrap();
         let mut out = Vec::new();
@@ -963,64 +933,6 @@ impl Db {
         out
     }
 
-    /// Everything the stats page draws for `[since, now)`, in one lock. Grouping by the local
-    /// calendar (`'localtime'`) is SQLite's, which reads the same zone the webview does.
-    pub fn listening(&self, since: i64, now: i64) -> Listening {
-        let conn = self.0.lock().unwrap();
-        let sum = |sql: &str, a: i64, b: i64| -> i64 {
-            conn.query_row(sql, [a, b], |r| r.get::<_, Option<i64>>(0)).ok().flatten().unwrap_or(0)
-        };
-        Listening {
-            since,
-            songs: songs(&conn, since, now),
-            days: all(
-                &conn,
-                "SELECT date(played_at, 'unixepoch', 'localtime') AS d, SUM(secs)
-                 FROM listens WHERE played_at >= ?1 AND played_at < ?2 GROUP BY d ORDER BY d",
-                [since, now],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            ),
-            hours: all(
-                &conn,
-                "SELECT CAST(strftime('%w', played_at, 'unixepoch', 'localtime') AS INTEGER) AS w,
-                        CAST(strftime('%H', played_at, 'unixepoch', 'localtime') AS INTEGER) AS h,
-                        SUM(secs)
-                 FROM listens WHERE played_at >= ?1 AND played_at < ?2 GROUP BY w, h",
-                [since, now],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            ),
-            prev_secs: sum(
-                "SELECT SUM(secs) FROM listens WHERE played_at >= ?1 AND played_at < ?2",
-                since - (now - since),
-                since,
-            ),
-            first_at: conn
-                .query_row("SELECT MIN(played_at) FROM listens", [], |r| r.get(0))
-                .ok()
-                .flatten(),
-            // A day's number counts local midnights: julianday turns at noon, hence the +0.5.
-            day_numbers: all(
-                &conn,
-                "SELECT DISTINCT CAST(julianday(played_at, 'unixepoch', 'localtime') + 0.5 AS INTEGER)
-                 AS n FROM listens ORDER BY n",
-                [],
-                |r| r.get(0),
-            ),
-            today: conn
-                .query_row(
-                    "SELECT CAST(julianday(?1, 'unixepoch', 'localtime') + 0.5 AS INTEGER)",
-                    [now],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0),
-        }
-    }
-
-    /// Per song played in `[since, now)`: what [`Listening::songs`] holds, without the rest of the
-    /// stats page. Home's Familiar Artists (#497).
-    pub fn listened_songs(&self, since: i64, now: i64) -> Vec<(String, i64, i64, i64)> {
-        songs(&self.0.lock().unwrap(), since, now)
-    }
 
     // --- playlist membership index (which of your playlists hold a track) ----------------------
     // Populated by `commands::sync_playlist_index`, which walks the library's owned playlists.
@@ -1380,36 +1292,9 @@ impl Db {
     }
 }
 
-/// See [`Listening::songs`].
-fn songs(conn: &Connection, since: i64, now: i64) -> Vec<(String, i64, i64, i64)> {
-    all(
-        conn,
-        "WITH firsts AS (SELECT video_id, MIN(played_at) AS first FROM listens GROUP BY video_id)
-         SELECT s.song_json, COUNT(*), SUM(l.secs), f.first
-         FROM listens l
-         JOIN listen_songs s ON s.video_id = l.video_id
-         JOIN firsts f ON f.video_id = l.video_id
-         WHERE l.played_at >= ?1 AND l.played_at < ?2
-         GROUP BY l.video_id",
-        [since, now],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    )
-}
-
-/// Every row of a query, mapped; empty when it fails. The stats read best-effort, like the rest.
-fn all<T>(
-    conn: &Connection,
-    sql: &str,
-    args: impl rusqlite::Params,
-    map: impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
-) -> Vec<T> {
-    let Ok(mut stmt) = conn.prepare(sql) else { return Vec::new() };
-    let out = stmt.query_map(args, map).map(|rows| rows.flatten().collect()).unwrap_or_default();
-    out
-}
-
-/// #396: fold On Repeat's old `plays` table into `listens` + `listen_songs` and drop it. Nothing to
-/// do once it's gone, which is every launch but the first (see the call in `open`).
+/// #396: fold the old `plays` table into `listens` + `listen_songs` and drop it, so an install from
+/// before the move keeps its play counts. Nothing to do once it's gone, which is every launch but
+/// the first (see the call in `open`).
 fn migrate_plays(conn: &mut Connection) -> rusqlite::Result<()> {
     let had: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'plays')",
@@ -1446,25 +1331,6 @@ fn migrate_plays(conn: &mut Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// The raw material of the stats page, as [`Db::listening`] reads it. `stats.rs` shapes it.
-#[derive(Debug, Default)]
-pub struct Listening {
-    /// Where the window starts: a song first played at or after it is new.
-    pub since: i64,
-    /// Per song played in the window: `(song_json, plays, secs, first play ever)`.
-    pub songs: Vec<(String, i64, i64, i64)>,
-    /// Seconds per local day (`2026-10-17`), oldest first, days with nothing left out.
-    pub days: Vec<(String, i64)>,
-    /// `(weekday, hour, secs)`, local, weekday 0 = Sunday. Hours with nothing left out.
-    pub hours: Vec<(i64, i64, i64)>,
-    /// Seconds heard in the window of the same length just before this one.
-    pub prev_secs: i64,
-    /// The oldest play on record, `None` with nothing recorded.
-    pub first_at: Option<i64>,
-    /// Every local day with a play, as day numbers, ascending; and today's.
-    pub day_numbers: Vec<i64>,
-    pub today: i64,
-}
 
 const LOCAL_TRACK_UPSERT: &str =
     "INSERT INTO local_tracks(path, title, artist, album, album_key, album_artist, track_no, duration_secs, cover, mtime, disc_no)
@@ -1516,7 +1382,7 @@ mod tests {
     }
 
     #[test]
-    fn top_plays_ranks_by_count_then_recency_and_carries_the_latest_metadata() {
+    fn play_counts_count_every_song_since_the_window() {
         let d = db();
         // "a" twice, "b" three times, "c" once but most recently, "old" outside the window.
         for (id, json, at) in [
@@ -1531,25 +1397,13 @@ mod tests {
             d.record_listen(id, json, at, 0);
         }
 
-        let top = d.top_plays(900, 20);
-        assert_eq!(
-            top,
-            vec![
-                ("{\"b\":3}".into(), 3), // most plays
-                ("{\"a\":2}".into(), 2), // latest json wins for a song, not the first
-                ("{\"c\":1}".into(), 1), // ties on count break toward the recent play
-            ],
-            "'old' is outside the window and must not appear"
-        );
-        assert_eq!(d.top_plays(900, 2).len(), 2, "limit applies");
-
-        // Same rows through `play_counts`: every song, not a top N, and no metadata.
+        // Every song with a count, not a top N, and no metadata to read back.
         let mut counts = d.play_counts(900);
         counts.sort();
         assert_eq!(counts, vec![("a".into(), 2), ("b".into(), 3), ("c".into(), 1)]);
         assert!(
             d.play_counts(1_500) == vec![("c".into(), 1)],
-            "`since` cuts the same way it does for top_plays"
+            "'old' is outside the window and must not appear"
         );
     }
 
@@ -1641,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn on_repeat_leaves_local_files_out_and_the_file_is_wal() {
+    fn the_database_file_is_wal_and_local_plays_count_too() {
         let path = std::env::temp_dir().join("mithenmusic-plays-purge-test.sqlite");
         std::fs::remove_file(&path).ok();
         let d = Db::open(&path).unwrap();
@@ -1653,8 +1507,11 @@ mod tests {
         assert_eq!(mode, "wal");
         d.record_listen("LOCAL:/music/a.mp3", "{\"local\":1}", 1_000, 0);
         d.record_listen("dQw4w9WgXcQ", "{\"yt\":1}", 1_000, 0);
-        assert_eq!(d.top_plays(0, 20), vec![("{\"yt\":1}".to_string(), 1)]);
-        assert_eq!(d.play_counts(0).len(), 2, "both count toward a playlist's sort");
+        assert_eq!(
+            d.play_counts(0).len(),
+            2,
+            "a file on disk counts toward the column like a stream"
+        );
         drop(d);
         std::fs::remove_file(&path).ok();
     }
@@ -1786,42 +1643,23 @@ mod tests {
         assert_eq!(d.get_stream("v", 900).unwrap().client.as_deref(), Some("VISIONOS"));
     }
 
-    /// A play's row grows with the time heard, and clearing the history takes the songs too.
+    /// A play's row grows with the time heard, and the count follows the rows.
     #[test]
-    fn a_listen_grows_and_clears() {
+    fn a_listen_grows_with_the_time_heard() {
         let d = db();
         let row = d.record_listen("a", "{\"a\":1}", 1_000, 30).unwrap();
+        assert_eq!(d.play_counts(0), vec![("a".into(), 1)]);
         d.set_listen_secs(row, 200);
-        let l = d.listening(0, 2_000);
-        assert_eq!(l.songs, vec![("{\"a\":1}".to_string(), 1, 200, 1_000)]);
-        assert_eq!(l.first_at, Some(1_000));
-        d.clear_listens();
-        let l = d.listening(0, 2_000);
-        assert!(l.songs.is_empty() && l.first_at.is_none() && l.day_numbers.is_empty());
+        let secs: i64 = d
+            .0
+            .lock()
+            .unwrap()
+            .query_row("SELECT secs FROM listens WHERE id = ?1", [row], |r| r.get(0))
+            .unwrap();
+        assert_eq!(secs, 200, "`set_listen_secs` keeps the row's own time up to date");
     }
 
-    /// The window, the one before it, first plays and the local-day buckets, against a fixed clock.
-    #[test]
-    fn listening_splits_the_window_from_the_one_before() {
-        let d = db();
-        let day = 86_400;
-        let t0 = 1_760_000_000; // any instant; the buckets are local days around it
-        d.record_listen("old", "{}", t0 - 2 * day + 5, 100); // the previous window only
-        d.record_listen("a", "{}", t0 - day, 60); // also in the previous window, at its edge
-        d.record_listen("a", "{}", t0 + 10, 40);
-        d.record_listen("b", "{}", t0 + day, 50);
-        let l = d.listening(t0, t0 + 2 * day);
-        assert_eq!(l.songs.len(), 2);
-        assert_eq!(l.prev_secs, 160, "the two days before `since`");
-        let firsts: Vec<i64> = l.songs.iter().map(|s| s.3).collect();
-        assert!(firsts.contains(&(t0 - day)), "\"a\" carries its first play, before the window");
-        assert_eq!(l.days.iter().map(|(_, s)| s).sum::<i64>(), 90);
-        assert_eq!(l.hours.iter().map(|(_, _, s)| s).sum::<i64>(), 90);
-        assert_eq!(l.day_numbers.len(), 4, "the whole history, not the window");
-        assert_eq!(l.today, *l.day_numbers.last().unwrap() + 1);
-    }
-
-    /// On Repeat's old `plays` table moves into `listens`, length standing in for time heard.
+    /// The old `plays` table moves into `listens`, length standing in for time heard.
     #[test]
     fn opening_the_db_moves_plays_into_listens() {
         let dir = qtest_dir("plays-to-listens");
@@ -1842,12 +1680,28 @@ mod tests {
             }
         }
         let d = Db::open(&path).unwrap();
-        let mut songs = d.listening(0, 1_000).songs;
-        songs.sort_by_key(|s| s.2);
-        assert_eq!(songs.len(), 2);
-        assert_eq!((songs[0].1, songs[0].2), (1, 0), "no length, no time");
-        assert_eq!((songs[1].1, songs[1].2), (2, 370), "3:05 twice");
-        assert!(songs[1].0.contains("A2"), "the latest metadata wins");
+        let mut counts = d.play_counts(0);
+        counts.sort();
+        assert_eq!(
+            counts,
+            vec![("a".into(), 2), ("b".into(), 1)],
+            "one count per play, per song"
+        );
+        // The song's latest metadata wins, and its length became the time heard.
+        let (json, secs): (String, i64) = d
+            .0
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT s.song_json, SUM(l.secs) FROM listens l
+                 JOIN listen_songs s ON s.video_id = l.video_id
+                 WHERE l.video_id = 'a' GROUP BY l.video_id",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(json.contains("A2"), "the latest metadata wins");
+        assert_eq!(secs, 370, "3:05 twice");
         let gone: bool = d
             .0
             .lock()
@@ -1858,7 +1712,7 @@ mod tests {
             .unwrap();
         assert!(!gone, "the old table is dropped");
         drop(d);
-        assert_eq!(Db::open(&path).unwrap().listening(0, 1_000).songs.len(), 2, "runs once");
+        assert_eq!(Db::open(&path).unwrap().play_counts(0).len(), 2, "runs once");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2408,10 +2262,13 @@ mod tests {
         // proves `None` here means "deleted" and not "the query failed".
         assert!(d.get_stream("old-row", now).is_none(), "{tag}: the stale cache row survived");
 
-        // Checkpoint 3: the user's history and library come through untouched. On Repeat still
-        // leaves out the local play, which moved into `listens` with the rest.
+        // Checkpoint 3: the user's history and library come through untouched. The old `plays`
+        // rows have moved into `listens`, which is what the play counts read now.
         assert_eq!(d.get_setting("volume").as_deref(), Some("0.42"), "{tag}");
-        assert_eq!(d.top_plays(0, 20), vec![(r#"{"yt":1}"#.to_string(), 1)], "{tag}");
+        assert!(
+            d.play_counts(0).iter().any(|(id, n)| id == "dQw4w9WgXcQ" && *n == 1),
+            "{tag}: the recorded play must survive the move into `listens`"
+        );
         let tracks = d.local_tracks(None);
         assert_eq!(tracks.len(), 1, "{tag}");
         assert_eq!((tracks[0].path.as_str(), tracks[0].title.as_str()), ("/music/a.mp3", "A"));

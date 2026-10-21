@@ -12,11 +12,9 @@
 		PlayIcon,
 		MusicNote01Icon,
 		UserIcon,
-		ListRestartIcon,
 		ArrowTurnBackwardIcon
 	} from '@hugeicons/core-free-icons';
 	import SectionHeading from './SectionHeading.svelte';
-	import { ON_REPEAT_ID } from '$lib/api';
 	import type { BrowseItem } from '$lib/api';
 	import { thumb } from '$lib/thumb';
 	import { setDragItem } from '$lib/dnd';
@@ -87,19 +85,8 @@
 							onerror={() => (failed = { ...failed, [item.thumbnail!]: true })}
 						/>
 					{:else}
-						{@const onRepeat = item.id === ON_REPEAT_ID}
-						<div
-							class="flex h-full w-full items-center justify-center {onRepeat
-								? 'bg-primary/10 text-primary'
-								: 'text-muted-foreground/50'}"
-						>
-							<!-- altIcon/showAlt, not a third ternary: `icon` is read once at mount. -->
-							<HugeiconsIcon
-								icon={round ? UserIcon : MusicNote01Icon}
-								altIcon={ListRestartIcon}
-								showAlt={onRepeat}
-								class="h-4 w-4"
-							/>
+						<div class="flex h-full w-full items-center justify-center text-muted-foreground/50">
+							<HugeiconsIcon icon={round ? UserIcon : MusicNote01Icon} class="h-4 w-4" />
 						</div>
 					{/if}
 				</div>

@@ -17,7 +17,6 @@
 		DragDropVerticalIcon,
 		RefreshIcon,
 		Tick02Icon,
-		UserStar01Icon,
 		YoutubeIcon
 	} from '@hugeicons/core-free-icons';
 	import { Button } from '$lib/components/ui/button';
@@ -50,7 +49,6 @@
 	const OURS: Record<string, IconSvgElement> = {
 		'@shortcuts': DashboardSquare02Icon,
 		'@recent': ArrowTurnBackwardIcon,
-		'@familiar': UserStar01Icon,
 		'@forgotten': Clock01Icon
 	};
 

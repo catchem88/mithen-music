@@ -73,13 +73,12 @@
 	// Saved here or on the account. `savedHere` is the narrower one: only a local row can be taken
 	// back out from a menu, since undoing YouTube's own copy belongs on the item's page.
 	const inLib = $derived(inLibrary(item));
-	// Your own playlists, uploads, Liked Music and On Repeat are in the library by being what they
-	// are: the row says so and does nothing. Everything else got saved, so it can be unsaved.
+	// Your own playlists, uploads and Liked Music are in the library by being what they are: the row
+	// says so and does nothing. Everything else got saved, so it can be unsaved.
 	const owned = $derived(ownedByUser(item));
 
-	// Radio and Share both need a YouTube item behind them: local folders and the locally-built
-	// On Repeat have none.
-	const onYouTube = $derived(!api.isLocalId(item.id) && item.id !== api.ON_REPEAT_ID);
+	// Radio and Share both need a YouTube item behind them: a local folder has none.
+	const onYouTube = $derived(!api.isLocalId(item.id));
 	// An artist isn't a track list — there's nothing unambiguous to queue. Songs, albums and
 	// playlists (local ones included) all are.
 	const canQueue = $derived(item.kind === 'song' || item.kind === 'album' || item.kind === 'playlist');
@@ -283,7 +282,7 @@
 		{/if}
 		<!-- Copies the tracks into one of your playlists. An artist has no track list to copy. Local
 		     albums and playlists on this machine count: the picker offers what can take them. -->
-		{#if item.id !== api.ON_REPEAT_ID && (item.kind === 'album' || item.kind === 'playlist')}
+		{#if item.kind === 'album' || item.kind === 'playlist'}
 			<button
 				class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10 disabled:opacity-50"
 				disabled={adding}
@@ -312,7 +311,7 @@
 		{/if}
 		<!-- One row for library membership: put it in, take the local copy back out, or just say it
 		     is already there (YouTube's own copy is unsaved from the item's page, which knows which
-		     write to send). Local folders and On Repeat have no library to be in. -->
+		     write to send). A local folder has no library to be in. -->
 		{#if onYouTube && !inLib}
 			<button
 				class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10 disabled:opacity-50"

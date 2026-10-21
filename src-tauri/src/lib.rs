@@ -25,7 +25,6 @@ mod romanize;
 mod session;
 mod spotify;
 mod state;
-mod stats;
 #[cfg(target_os = "windows")]
 mod taskbar;
 mod tray;
@@ -1039,7 +1038,6 @@ pub fn run() {
             commands::playlist_index,
             commands::sync_playlist_index,
             commands::play_counts,
-            commands::top_artists,
             commands::get_album,
             commands::get_blocked_artists,
             commands::block_artist,

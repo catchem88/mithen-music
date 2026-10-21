@@ -66,10 +66,9 @@
 	const anywayAdds = $derived(chosen.length * songs.length - localDupes);
 
 	// Fetch the library playlists fresh each time the picker opens (cheap; picks up new playlists).
-	// On Repeat and Liked Music are dropped: On Repeat is built from local play counts, and Liked
-	// Music takes likes rather than playlist edits (YouTube 400s the add). The command boundary
-	// refuses both too, but a target you can tap and can't use is the bug. When the account's half
-	// can't be fetched, the playlists on this machine still can: they need no network.
+	// Liked Music is dropped: it takes likes rather than playlist edits (YouTube 400s the add). The
+	// command boundary refuses it too, but a target you can tap and can't use is the bug. When the
+	// account's half can't be fetched, the playlists on this machine still can: they need no network.
 	$effect(() => {
 		if (ui.addSongs) {
 			loading = true;
@@ -84,9 +83,7 @@
 				})
 				.then(
 					(p) =>
-						(playlists = p.filter(
-							(i) => i.id !== api.ON_REPEAT_ID && i.id !== api.LIKED_MUSIC_ID
-						))
+						(playlists = p.filter((i) => i.id !== api.LIKED_MUSIC_ID))
 				)
 				.catch((e) => toast.error(String(e)))
 				.finally(() => (loading = false));

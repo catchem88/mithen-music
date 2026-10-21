@@ -273,24 +273,23 @@ const range = (n: number, prefix: string) => Array.from({ length: n }, (_, i) =>
 	const p = empty();
 	p.home = { ...p.home, order: ['@recent', 'Listen again'], hidden: ['@forgotten'] };
 	const back = hydrate(JSON.parse(JSON.stringify(p)));
-	// '@familiar' and '@shortcuts' are slotted into an order saved before they existed, so neither
-	// sinks to the bottom.
+	// '@shortcuts' is slotted into an order saved before it existed, so it doesn't sink to the bottom.
 	ok(
-		back.home.order.join() === '@shortcuts,@recent,@familiar,Listen again',
+		back.home.order.join() === '@shortcuts,@recent,Listen again',
 		'order survives persistence'
 	);
 	ok(back.home.hidden.join() === '@forgotten', 'hidden survives persistence');
 	ok(
 		hydrate({ home: { order: ['Listen again'], hidden: [] } }).home.order.join() ===
-			'@shortcuts,Listen again,@familiar',
-		'no @recent to sit under: the new section goes last'
+			'@shortcuts,Listen again',
+		'an unranked section keeps its saved place'
 	);
 	ok(
 		hydrate(JSON.parse(JSON.stringify(back))).home.order.join() === back.home.order.join(),
 		'the slotting happens once, not on every load'
 	);
 	ok(hydrate({}).home.order.length === 0, 'a blob from before the feature reads as unarranged');
-	ok(hydrate({ home: { order: [1, 'a'], hidden: 'nope' } }).home.order.join() === '@shortcuts,a,@familiar', 'junk is dropped');
+	ok(hydrate({ home: { order: [1, 'a'], hidden: 'nope' } }).home.order.join() === '@shortcuts,a', 'junk is dropped');
 }
 
 // --- the rest of Edit home: look, reset ----------------------------------------------------------
@@ -370,7 +369,7 @@ const range = (n: number, prefix: string) => Array.from({ length: n }, (_, i) =>
 	ok(fresh.title === 'Workout' && fresh.thumbnail === 'new.jpg', 'so do the title and the cover');
 	ok(fresh.lastUsedAt === 5, 'and the tile keeps everything the library knows nothing about');
 	ok(freshen(stale, []) === stale, 'a card the library has no row for is left alone');
-	// On Repeat and local albums are drawn from their own store; a row without art must not blank
+	// A local album is drawn from its own store; a row without art must not blank
 	// a snapshot that has some.
 	const bare: BrowseItem[] = [{ kind: 'playlist', id: 'VL1', title: 'Workout' }];
 	ok(freshen(stale, bare).thumbnail === 'old.jpg', 'a live row with no cover keeps the old one');

@@ -18,7 +18,6 @@
 	import RecentRail from '$lib/components/RecentRail.svelte';
 	import Shelf from '$lib/components/Shelf.svelte';
 	import ForgottenFavourites from '$lib/components/ForgottenFavourites.svelte';
-	import FamiliarArtists from '$lib/components/FamiliarArtists.svelte';
 	import HomeLayoutDialog from '$lib/components/HomeLayoutDialog.svelte';
 	import TrackRowSkeleton from '$lib/components/TrackRowSkeleton.svelte';
 	import * as api from '$lib/api';
@@ -29,7 +28,6 @@
 		adoptHomeKinds,
 		personal,
 		playback,
-		seedOnRepeatPick,
 		toast
 	} from '$lib/player.svelte';
 	import { t } from '$lib/i18n.svelte';
@@ -38,7 +36,6 @@
 		arrangeSections,
 		freshen,
 		hiddenSections,
-		interleave,
 		recentItems
 	} from '$lib/personal';
 	import { getCached, putCached } from '$lib/pagecache';
@@ -120,7 +117,6 @@
 	// "@"), so they keep their slot even before (or without) any content to show.
 	const SHORTCUTS = '@shortcuts';
 	const RECENT = '@recent';
-	const FAMILIAR = '@familiar';
 	const FORGOTTEN = '@forgotten';
 	type Block =
 		| { id: string; key: string; title: string; shelf?: undefined }
@@ -131,7 +127,6 @@
 	const local = $derived<Block[]>([
 		{ id: SHORTCUTS, key: SHORTCUTS, title: t('home.shortcuts') },
 		{ id: RECENT, key: RECENT, title: t('home.jump_back_in') },
-		{ id: FAMILIAR, key: FAMILIAR, title: t('home.familiar_artists') },
 		{ id: FORGOTTEN, key: FORGOTTEN, title: t('home.forgotten_favourites') }
 	]);
 	/**
@@ -195,7 +190,7 @@
 		const order = personal.home.order;
 		if (!order.length) return false;
 		const rank = new Map(order.map((k, i) => [k, i]));
-		const here = new Set([SHORTCUTS, RECENT, FAMILIAR, FORGOTTEN, ...feed.map((s) => s.kind)]);
+		const here = new Set([SHORTCUTS, RECENT, FORGOTTEN, ...feed.map((s) => s.kind)]);
 		let deepest = -1;
 		for (const [k, r] of rank) if (here.has(k) && r > deepest) deepest = r;
 		// Kinds only: a title key left from another language would never arrive.
@@ -241,7 +236,6 @@
 			home = hit;
 			loading = false;
 			noteForgotten();
-			cater(hit, params);
 			// Show the cached feed and leave it alone for this visit. A background revalidation
 			// replaces the whole feed on return and re-lays out every section under the restored
 			// scroll position — trading freshness for a stable page. The five minutes runs from
@@ -259,7 +253,6 @@
 			home = fresh;
 			putCached(key, fresh);
 			noteForgotten();
-			cater(fresh, params);
 			seekForgotten(params); // background: the feed is already on screen
 		} catch (e) {
 			if (!hit) error = String(e);
@@ -320,50 +313,12 @@
 		return () => io.disconnect();
 	}
 
-	/**
-	 * YouTube's "From the community" shelf is already account-personalized, but it isn't tied to what
-	 * the user actually plays *in MithenMusic*. Swap its items for community playlists searched from
-	 * their top artists, keeping the shelf's title and position. With no listening signal yet — or if
-	 * the searches fail — YouTube's own items are left exactly as they came. Best-effort: this can
-	 * never fail the page.
-	 */
-	async function cater(page: HomePage, params: string | null) {
-		if (params) return; // a mood-filtered feed is the chip's, not the user's
-		if (!page.sections.some((s) => s.kind === 'community')) return;
-		const artists = (await api.topArtists(3).catch(() => [])).map((a) => a.name);
-		if (!artists.length) return;
-		const key = `community:${artists.join('|')}`;
-		let items = getCached<BrowseItem[]>(key);
-		if (!items) {
-			const lists = await Promise.all(
-				artists.map((a) => api.searchCards(a, 'playlists').catch(() => [] as BrowseItem[]))
-			);
-			items = interleave(lists, 20);
-			if (!items.length) return;
-			putCached(key, items);
-		}
-		if (selected !== params) return; // the user clicked away to a mood feed
-		// Re-locate the shelf instead of patching the page we were handed: `home` has very likely moved
-		// on while the searches ran (a revalidation, or the Forgotten favourites crawl appending pages).
-		const idx = home?.sections.findIndex((s) => s.kind === 'community') ?? -1;
-		if (idx < 0) return;
-		home = { ...home!, sections: home!.sections.map((s, i) => (i === idx ? { ...s, items } : s)) };
-	}
-
 	// Chips only refresh when a response actually carries them (never blank the row mid-switch).
 	$effect(() => {
 		if (home?.chips?.length) chips = home.chips;
 	});
 
 	onMount(() => load(null));
-
-	// On Repeat crosses its threshold while you listen, so re-check on every track change rather
-	// than once per visit: sitting on home through your fifth song should be enough to see the tile.
-	// The check is a local SQLite read, and `seedPick` is what actually decides.
-	$effect(() => {
-		playback.now?.videoId;
-		seedOnRepeatPick();
-	});
 </script>
 
 <!-- isolate: the header's artwork canvas sits at -z-10 and must stay inside this page, above the
@@ -461,8 +416,6 @@
 					<Shortcuts />
 				{:else if block.key === RECENT}
 					{#if recent.length}<RecentRail items={recent} />{/if}
-				{:else if block.key === FAMILIAR}
-					<FamiliarArtists />
 				{:else if forgotten}
 					<ForgottenFavourites
 						section={forgotten}

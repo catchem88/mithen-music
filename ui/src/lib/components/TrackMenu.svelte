@@ -131,7 +131,7 @@
 	const rated = $derived(ratingOf(song));
 	// Library ▸ Songs, which is a different list from Liked Music and a different write. Only rows
 	// YouTube sent a menu with carry the tokens for it, so the row is absent on the ones this app
-	// builds itself (local files, On Repeat, a mirrored guest queue) rather than dead.
+	// builds itself (local files, a playlist kept on this machine) rather than dead.
 	const inLib = $derived(inSongLibrary(song));
 	const libraryToken = $derived(songLibraryToken(song));
 	// A local file has no YouTube identity: liking it or sharing it is not a thing, so those items

@@ -18,7 +18,6 @@
 		BookmarkAdd02Icon,
 		BookmarkCheck02Icon,
 		BookmarkMinus02Icon,
-		ListRestartIcon,
 		Sorting01Icon,
 		ArrowUpDownIcon,
 		ComputerIcon,
@@ -42,7 +41,6 @@
 	import PlaylistSuggestions from '$lib/components/PlaylistSuggestions.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import * as api from '$lib/api';
-	import { ON_REPEAT_ID } from '$lib/api';
 	import type { BrowseItem, PlaylistPage, SongItem } from '$lib/api';
 	import { getCached, putCached, invalidateCachedPrefix } from '$lib/pagecache';
 	import { thumb } from '$lib/thumb';
@@ -152,8 +150,6 @@
 	const nowId = $derived(playback.now?.videoId);
 	// The liked-music auto-playlist isn't a user playlist — no rename/delete, but shuffle is fine.
 	const isLiked = $derived(id === api.LIKED_MUSIC_ID);
-	// On Repeat is built locally from play counts: no artwork, and no radio to seed autoplay from.
-	const isOnRepeat = $derived(id === ON_REPEAT_ID);
 	// Kept on this machine (#251): no YouTube item behind it, so no radio and nothing to share, and
 	// every row is already here (no pages to walk).
 	const isLocalList = $derived(api.isLocalPlaylist(id));
@@ -191,7 +187,7 @@
 	const editable = $derived((pl?.owned ?? false) && !isLiked);
 	// Saving someone else's playlist keeps it on this machine, signed in or not: YouTube has no
 	// "save" for a playlist that doesn't cost an account, and the local one works offline. Your own
-	// playlists, Liked Music and On Repeat are in the library already by definition.
+	// playlists and Liked Music are in the library already by definition.
 	// Once the sync button has put it on the account, the account owns the save: removing only the
 	// local copy would leave it in the library grid, so the entry hides until the user signs out.
 	// On the account already (pushed from here, or saved on another device): the local copy is not
@@ -199,7 +195,7 @@
 	const inAccount = $derived(
 		!!auth.account?.signedIn && (isSynced(id) || library.items.some((i) => i.id === id))
 	);
-	const savable = $derived(!isOnRepeat && !isLiked && !editable && !inAccount);
+	const savable = $derived(!isLiked && !editable && !inAccount);
 	const savedHere = $derived(isSaved(id));
 	// YouTube's header count includes rows that never make it into the list (unavailable or
 	// region-blocked tracks), so it reads high. Once every page is in, we know the real number, so
@@ -750,13 +746,10 @@
 		id,
 		title: pl?.title ?? t('common.playlist_singular'),
 		subtitle,
-		// On Repeat stays artwork-free wherever it's rendered (shortcuts, recents) so it always
-		// draws its icon rather than one of its songs' covers.
-		thumbnail: isOnRepeat ? undefined : (pl?.cover ?? pl?.thumbnail ?? bgImage ?? undefined)
+		thumbnail: pl?.cover ?? pl?.thumbnail ?? bgImage ?? undefined
 	});
 
-	// `sourceId` points autoplay at that playlist's radio. On Repeat has no YouTube id, so pass
-	// none and let autoplay seed off the last video instead. The queue is the whole playlist, not
+	// `sourceId` points autoplay at that playlist's radio. The queue is the whole playlist, not
 	// the pages scrolled so far, but waiting for it here is what made long playlists take forever
 	// to start: YouTube hands out tracks 100 at a time and the tokens are chained, so the backend
 	// takes the token and walks the rest into the queue while page 1 is already playing.
@@ -786,7 +779,7 @@
 			asItem(),
 			items,
 			at >= 0 ? at : null,
-			isOnRepeat ? undefined : id,
+			id,
 			undefined,
 			sorting ? undefined : pl.continuation
 		);
@@ -848,7 +841,7 @@
 		// restore the true playlist order and every re-shuffle is fresh. It also mixes each page
 		// it walks into the unplayed tail, so this stays a shuffle of the whole playlist rather
 		// than of the pages that happen to be loaded.
-		playFrom(asItem(), pl.items, null, isOnRepeat ? undefined : id, true, pl.continuation);
+		playFrom(asItem(), pl.items, null, id, true, pl.continuation);
 	}
 
 	function openMenu(e: MouseEvent) {
@@ -1021,13 +1014,7 @@
 					></div>
 					<div class="absolute inset-0 bg-gradient-to-r from-background via-background/50 to-transparent"></div>
 				</div>
-				{#if isOnRepeat}
-					<div
-						class="relative flex h-40 w-40 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-lg"
-					>
-						<HugeiconsIcon icon={ListRestartIcon} class="h-20 w-20" />
-					</div>
-				{:else if art}
+				{#if art}
 					<img src={art} alt="" class="relative h-40 w-40 rounded-xl object-cover shadow-lg" />
 				{:else}
 					<div class="relative h-40 w-40 rounded-xl bg-muted"></div>
@@ -1315,9 +1302,8 @@
 		>
 			<HugeiconsIcon icon={ArrowDownWideNarrowIcon} class="h-4 w-4" /> {t('player.add_to_queue')}
 		</button>
-		<!-- On Repeat is built from local play counts, and a playlist on this machine is no YouTube
-		     playlist either: neither has a radio to seed. -->
-		{#if !isOnRepeat && !isLocalList}
+		<!-- A playlist on this machine is no YouTube playlist: it has no radio to seed. -->
+		{#if !isLocalList}
 			<button
 				class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10"
 				onclick={() => run(() => startRadio('playlist', id, pl?.title))}
@@ -1325,24 +1311,21 @@
 				<HugeiconsIcon icon={Radio02Icon} class="h-4 w-4" /> {t('player.start_radio')}
 			</button>
 		{/if}
-		<!-- Copies the tracks into another of your playlists. On Repeat is built from local play
-		     counts, so there is nothing YouTube would take. -->
-		{#if !isOnRepeat}
-			<button
-				class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10 disabled:opacity-50"
-				onclick={saveToPlaylist}
-				disabled={copying || !pl?.items.length}
-			>
-				<HugeiconsIcon icon={PlayListAddIcon} class="h-4 w-4" /> {t('player.save_to_playlist')}
-			</button>
-		{/if}
+		<!-- Copies the tracks into another of your playlists. -->
+		<button
+			class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10 disabled:opacity-50"
+			onclick={saveToPlaylist}
+			disabled={copying || !pl?.items.length}
+		>
+			<HugeiconsIcon icon={PlayListAddIcon} class="h-4 w-4" /> {t('player.save_to_playlist')}
+		</button>
 		<button
 			class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10"
 			onclick={() => run(() => addPick(asItem()))}
 		>
 			<HugeiconsIcon icon={DashboardSquare02Icon} class="h-4 w-4" /> {t('player.add_to_shortcuts')}
 		</button>
-		{#if !isOnRepeat && !isLocalList}
+		{#if !isLocalList}
 			<button
 				class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/10"
 				onclick={() => run(() => openShare(asItem()))}
@@ -1364,7 +1347,7 @@
 				/>
 				{savedHere ? t('library.remove_from_library') : t('library.save_to_library')}
 			</button>
-		{:else if inAccount && !isOnRepeat && !isLiked && !editable}
+		{:else if inAccount && !isLiked && !editable}
 			{#if ownedByUser(asItem())}
 				<div class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground">
 					<HugeiconsIcon icon={BookmarkCheck02Icon} class="h-4 w-4" /> {t('library.in_library')}
