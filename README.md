@@ -37,5 +37,8 @@ MithenMusic is a native desktop audio player + YouTube Music client for Windows,
 * Uninstalls cleanly, no leftovers
 * Prioritizing user-ergonomics
 
+## Support and Sponsor the OG creator!
+[Limusic](https://github.com/SimoHypers/limusic)
+
 ## Credits
 * [SimoHypers](https://github.com/SimoHypers) - author of [Limusic](https://github.com/SimoHypers/limusic), which MithenMusic is a fork of.
